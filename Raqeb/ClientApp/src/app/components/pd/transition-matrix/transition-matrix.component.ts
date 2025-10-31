@@ -1,186 +1,212 @@
-// ============================================
-// pd-matrix-viewer.component.ts
-// ============================================
-
 import { Component, OnInit } from '@angular/core';
-import { PDMatrixFilterDto, SwaggerClient } from '../../../shared/services/Swagger/SwaggerClient.service';
-
-interface PDTransitionCell {
-  fromGrade: number;
-  toGrade: number;
-  count: number;
-}
-
-interface PDRowStat {
-  fromGrade: number;
-  totalCount: number;
-  pdPercent: number;
-}
-
-interface PDTransitionMatrixItem {
-  year: number;
-  month: number;
-  cells: PDTransitionCell[];
-  rowStats: PDRowStat[];
-}
-
-interface MatrixData {
-  [fromGrade: number]: {
-    [toGrade: number]: number;
-  };
-}
+import { FormBuilder, FormGroup } from '@angular/forms';
+import { SwaggerClient, PDMatrixFilterDto, PagedResultOfPDTransitionMatrixDto } from '../../../shared/services/Swagger/SwaggerClient.service';
+import { MessageService } from 'primeng/api';
 
 @Component({
   templateUrl: './transition-matrix.component.html',
-  styleUrl: './transition-matrix.component.scss'
+  styleUrl: './transition-matrix.component.scss',
+  providers: [MessageService]
 })
-export class TransitionMatrixComponent {
-  selectedYear: number = 2018;
-  selectedMonth: number = 1;
-  viewMode: 'matrix' | 'stats' = 'matrix';
-  
-  matrixData: MatrixData = {};
-  rowStats: PDRowStat[] = [];
-  grades: number[] = [1, 2, 3, 4];
-  months: string[] = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  
-  loading: boolean = false;
-  error: string | null = null;
-  maxCount: number = 0;
-  
-  currentItem: any = null;
+export class TransitionMatrixComponent implements OnInit {
+  matrixData!: PagedResultOfPDTransitionMatrixDto;
+  filterForm: FormGroup;
+  loading = false;
+  years: number[] = [];
+  months: { label: string; value: number }[] = [];
+  currentMatrix: any = null;
 
-  constructor(private swaggerClient: SwaggerClient) {}
-
-     filter :any= {
-      year: this.selectedYear,
-      month: this.selectedMonth,
-      page: 1,
-      pageSize: 1 ,
-      poolId : 7,
-      minGrade : 1,
-      maxGrade : 4 ,
-      version :1
-    };
-
-  ngOnInit(): void {
-    this.loadData();
-  }
-
-  loadData(): void {
-    this.loading = true;
-    this.error = null;
-
-
-  
-
-    this.swaggerClient.apiPDTransitionMatricesPost(this.filter).subscribe({
-      next: (response) => {
-        if (response.items && response.items.length > 0) {
-          this.currentItem = response.items[0];
-          this.processMatrixData();
-        }
-        this.loading = false;
-      },
-      error: (err) => {
-        this.error = 'Failed to load PD Transition Matrix data';
-        console.error('API Error:', err);
-        this.loading = false;
-      }
-    });
-  }
-
-  processMatrixData(): void {
-    if (!this.currentItem) return;
-
-    // Initialize matrix
-    this.matrixData = {};
-    this.grades.forEach(from => {
-      this.matrixData[from] = {};
-      this.grades.forEach(to => {
-        this.matrixData[from][to] = 0;
-      });
+  constructor(
+    private swaggerClient: SwaggerClient,
+    private fb: FormBuilder,
+    private messageService: MessageService
+  ) {
+    // Set default year to 2015 and January as default month
+    this.filterForm = this.fb.group({
+      year: [2015],
+      month: [1], // Set to January (1)
+      pageSize: [12],
+      page: [1],
+      version: [1],
+      poolId : [7]
     });
 
-    // Fill matrix with data
-    this.currentItem.cells.forEach(cell => {
-      this.matrixData[cell.fromGrade][cell.toGrade] = cell.count;
-    });
-
-    // Set row stats
-    this.rowStats = this.currentItem.rowStats.filter((stat, index, self) => 
-      index === self.findIndex(s => s.fromGrade === stat.fromGrade)
-    );
-
-    // Calculate max count for color scaling
-    this.maxCount = Math.max(
-      ...Object.values(this.matrixData).flatMap(row => Object.values(row))
-    );
+    // Initialize months array
+    this.months = [
+      { label: 'January', value: 1 },
+      { label: 'February', value: 2 },
+      { label: 'March', value: 3 },
+      { label: 'April', value: 4 },
+      { label: 'May', value: 5 },
+      { label: 'June', value: 6 },
+      { label: 'July', value: 7 },
+      { label: 'August', value: 8 },
+      { label: 'September', value: 9 },
+      { label: 'October', value: 10 },
+      { label: 'November', value: 11 },
+      { label: 'December', value: 12 }
+    ];
   }
 
-  changeMonth(delta: number): void {
-    const newMonth = this.selectedMonth + delta;
-    
-    if (newMonth < 1) {
-      this.selectedMonth = 12;
-      this.selectedYear--;
-    } else if (newMonth > 12) {
-      this.selectedMonth = 1;
-      this.selectedYear++;
-    } else {
-      this.selectedMonth = newMonth;
+  ngOnInit() {
+    // Generate years from 2015 to current year
+    const currentYear = new Date().getFullYear();
+    for (let year = 2015; year <= currentYear; year++) {
+      this.years.push(year);
     }
-    
     this.loadData();
   }
 
-  onYearChange(year: number): void {
-    this.selectedYear = year;
+  hasData(): boolean {
+    return !!this.currentMatrix?.cells && this.currentMatrix.cells.length > 0;
+  }
+
+  getMonthName(month: number): string {
+    return this.months.find(m => m.value === month)?.label || '';
+  }
+
+  loadData() {
+    this.loading = true;
+    const filter: PDMatrixFilterDto = this.filterForm.value;
+    
+    this.swaggerClient.apiPDTransitionMatricesPost(filter)
+      .subscribe({
+        next: (data) => {
+          this.matrixData = data;
+          if (data.items && data.items.length > 0) {
+            this.currentMatrix = data.items[0];
+          } else {
+            this.currentMatrix = null;
+          }
+          this.loading = false;
+        },
+        error: (error) => {
+          console.error('Error loading matrix data:', error);
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: 'Failed to load transition matrix data'
+          });
+          this.loading = false;
+          this.currentMatrix = null;
+        }
+      });
+  }
+
+  onFilterChange() {
     this.loadData();
   }
 
-  getColorClass(count: number): string {
-    if (count === 0) return 'intensity-0';
+  getMatrixData(fromGrade: number, toGrade: number): number {
+    if (!this.currentMatrix?.cells) return 0;
+    const cell = this.currentMatrix.cells.find(
+      c => c.fromGrade === fromGrade && c.toGrade === toGrade
+    );
+    return cell?.count || 0;
+  }
+
+  getRowStats(fromGrade: number) {
+    if (!this.currentMatrix?.rowStats) return null;
+    return this.currentMatrix.rowStats.find(
+      r => r.fromGrade === fromGrade
+    );
+  }
+
+  getCellColor(value: number, max: number): string {
+    if (value === 0) return '#ffffff';
+    const intensity = Math.log(value + 1) / Math.log(max + 1);
+    const baseColor = '0, 61, 125';  // RGB values
+    return `rgba(${baseColor}, ${intensity})`;
+  }
+
+  getMaxValue(): number {
+    if (!this.currentMatrix?.cells) return 0;
+    return Math.max(...this.currentMatrix.cells.map(c => c.count));
+  }
+
+  exportPdf() {
+    if (!this.hasData()) {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'No Data',
+        detail: 'No data available to export'
+      });
+      return;
+    }
+
+    const filter: PDMatrixFilterDto = this.filterForm.value;
     
-    const intensity = Math.min(100, (count / this.maxCount) * 100);
+    this.swaggerClient.apiPDTransitionMatricesExportPost(filter)
+      .subscribe({
+        next: (response) => {
+     if (response && response.data) {
+        // Create blob and download
+            const blob = new Blob([response.data], { type: 'application/pdf' });
+    const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+     link.href = url;
+         link.download = `transition-matrix-${filter.year}-${filter.month}.pdf`;
+      link.click();
+            window.URL.revokeObjectURL(url);
+
+   this.messageService.add({
+        severity: 'success',
+     summary: 'Success',
+            detail: 'PDF exported successfully'
+       });
+     }
+        },
+  error: (error) => {
+          console.error('Error exporting PDF:', error);
+    this.messageService.add({
+         severity: 'error',
+   summary: 'Error',
+            detail: 'Failed to export PDF'
+          });
+        }
+    });
+  }
+
+  exportExcel() {
+    if (!this.hasData()) {
+      this.messageService.add({
+     severity: 'warn',
+     summary: 'No Data',
+        detail: 'No data available to export'
+      });
+    return;
+}
+
+    const filter: PDMatrixFilterDto = this.filterForm.value;
     
-    if (intensity < 20) return 'intensity-20';
-    if (intensity < 40) return 'intensity-40';
-    if (intensity < 60) return 'intensity-60';
-    if (intensity < 80) return 'intensity-80';
-    return 'intensity-100';
-  }
+    this.swaggerClient.apiPDTransitionMatricesExportPost(filter)
+      .subscribe({
+    next: (response) => {
+          if (response && response.data) {
+     // Create blob and download
+   const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = window.URL.createObjectURL(blob);
+ const link = document.createElement('a');
+ link.href = url;
+      link.download = `transition-matrix-${filter.year}-${filter.month}.xlsx`;
+            link.click();
+       window.URL.revokeObjectURL(url);
 
-  getPDColorClass(percent: number): string {
-    if (percent < 1) return 'pd-low';
-    if (percent < 5) return 'pd-medium';
-    if (percent < 20) return 'pd-high';
-    return 'pd-critical';
-  }
-
-  getPercentage(count: number, total: number): string {
-    return total > 0 ? ((count / total) * 100).toFixed(2) : '0.00';
-  }
-
-  getMigrations(fromGrade: number): Array<{grade: number, count: number, percentage: string}> {
-    const stat = this.rowStats.find(s => s.fromGrade === fromGrade);
-    if (!stat) return [];
-
-    return this.grades
-      .map(toGrade => ({
-        grade: toGrade,
-        count: this.matrixData[fromGrade][toGrade],
-        percentage: this.getPercentage(this.matrixData[fromGrade][toGrade], stat.totalCount)
-      }))
-      .filter(m => m.count > 0);
-  }
-
-  exportData(): void {
-    // Implement export functionality
-    console.log('Export data', this.currentItem);
-  }
-
-  setViewMode(mode: 'matrix' | 'stats'): void {
-    this.viewMode = mode;
+    this.messageService.add({
+          severity: 'success',
+       summary: 'Success',
+      detail: 'Excel file exported successfully'
+        });
+        }
+},
+        error: (error) => {
+     console.error('Error exporting Excel:', error);
+        this.messageService.add({
+          severity: 'error',
+            summary: 'Error',
+        detail: 'Failed to export Excel file'
+          });
+        }
+      });
   }
 }

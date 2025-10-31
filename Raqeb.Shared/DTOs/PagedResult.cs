@@ -10,5 +10,17 @@
     }
 
 
+
+    public class TransitionMatrixDto
+    {
+        public int Year { get; set; }
+        public int? Month { get; set; }
+        public bool IsYearlyAverage { get; set; }
+        public string Title { get; set; }
+        public List<TransitionCellDto> Cells { get; set; }
+        public List<RowStatDto> RowStats { get; set; }
+    }
+
+
   
 }

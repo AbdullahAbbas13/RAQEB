@@ -50,6 +50,10 @@ import { DialogModule } from 'primeng/dialog';
 import { FieldsetModule } from 'primeng/fieldset';
 import { PasswordModule } from 'primeng/password';
 import { FileUploadModule } from 'primeng/fileupload';
+import { CardModule } from 'primeng/card';
+import { ButtonModule } from 'primeng/button';
+import { ProgressSpinnerModule } from 'primeng/progressspinner';
+import { MessageModule } from 'primeng/message';
 import { UploadComponent } from "./components/upload/upload.component";
 
 const importss = [
@@ -68,6 +72,11 @@ const importss = [
   FieldsetModule,
   PasswordModule,
   FileUploadModule,
+  CardModule,
+  ButtonModule,
+  ProgressSpinnerModule,
+  MessageModule,
+  ToastModule
 ];
 
 
@@ -100,7 +109,6 @@ const importss = [
     FormsModule,
     NgbModule,
     SwiperModule,
-    ToastModule,
     PrintErrorModule,
     ...importss
   ],

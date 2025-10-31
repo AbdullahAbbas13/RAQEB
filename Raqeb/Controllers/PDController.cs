@@ -84,33 +84,81 @@ namespace Raqeb.API.Controllers
         }
 
 
+        [HttpPost("transition-matrices/export")]
+        public async Task<FileResult> ExportTransitionMatrixToExcel([FromBody] PDMatrixFilterDto filter)
+        {
+            var fileBytes = await _repo.ExportTransitionMatrixToExcelAsync(filter);
 
-        //[HttpGet("transition/{poolId}")]
-        //public async Task<IActionResult> Transition(int poolId)
-        //{
-        //    var res = await _repo.CalculateTransitionMatrixAsync(poolId);
-        //    return res.Success ? Ok(res) : BadRequest(res);
-        //}
+            if (fileBytes == null || fileBytes.Length == 0)
+                throw new Exception("⚠️ No data found for the selected filters.");
 
-        //[HttpGet("average/{poolId}")]
-        //public async Task<IActionResult> Average(int poolId)
-        //{
-        //    var res = await _repo.CalculateAverageTransitionMatrixAsync(poolId);
-        //    return res.Success ? Ok(res) : BadRequest(res);
-        //}
+            // 📦 تجهيز اسم الملف وصيغة الإرجاع
+            var fileName = $"TransitionMatrix_{filter.PoolId}_{filter.Year ?? DateTime.UtcNow.Year}.xlsx";
 
-        //[HttpGet("longrun/{poolId}")]
-        //public async Task<IActionResult> LongRun(int poolId)
-        //{
-        //    var res = await _repo.CalculateLongRunMatrixAsync(poolId);
-        //    return res.Success ? Ok(res) : BadRequest(res);
-        //}
+            // ✅ إرجاع الملف بصيغة Excel كـ FileResult مباشر
+            return new FileContentResult(fileBytes,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            {
+                FileDownloadName = fileName
+            };
+        }
 
-        //[HttpGet("odr/{poolId}")]
-        //public async Task<IActionResult> ObservedRate(int poolId)
-        //{
-        //    var res = await _repo.CalculateObservedDefaultRateAsync(poolId);
-        //    return res.Success ? Ok(res) : BadRequest(res);
-        //}
+
+
+
+        // ✅ عرض المتوسطات السنوية فقط
+        [HttpPost("yearly-averages")]
+        public async Task<ActionResult<Task<List<TransitionMatrixDto>>>> GetYearlyAverages([FromBody] PDMatrixFilterDto filter)
+        {
+            var result = await _repo.CalculateYearlyAverageTransitionMatricesAsync(filter);
+            return Ok(result);
+        }
+
+        // ✅ تصدير المتوسط السنوي إلى Excel
+        [HttpPost("yearly-averages/export")]
+        public async Task<FileResult> ExportYearlyAverageToExcel([FromBody] PDMatrixFilterDto filter)
+        {
+            var fileBytes = await _repo.ExportYearlyAverageToExcelAsync(filter);
+
+            if (fileBytes == null || fileBytes.Length == 0)
+                throw new Exception("⚠️ No data found for the selected filters.");
+
+            // 📦 تجهيز اسم الملف وصيغة الإرجاع
+            var fileName = $"YearlyAverage_{filter.PoolId}_{filter.Year ?? DateTime.UtcNow.Year}.xlsx";
+
+            // ✅ إرجاع الملف بصيغة Excel كـ FileResult مباشر
+            return new FileContentResult(fileBytes,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            {
+                FileDownloadName = fileName
+            };
+        }
+
+
+
+
+        [HttpPost("transition-matrix/longrun")]
+        public async Task<ActionResult<TransitionMatrixDto>> GetLongRunMatrix()
+        {
+            var matrix = await _repo.CalculateLongRunAverageTransitionMatrixAsync();
+            if (matrix == null)
+                return NotFound("⚠️ No data found for this pool.");
+
+            return Ok(matrix);
+        }
+
+
+
+        [HttpPost("transition-matrix/longrun/export")]
+        public async Task<ActionResult<FileResult>> ExportLongRunMatrix()
+        {
+            var fileBytes = await _repo.ExportLongRunToExcelAsync();
+            if (fileBytes == null || fileBytes.Length == 0)
+                return BadRequest("⚠️ No data found for the selected pool.");
+
+            var fileName = $"LongRunMatrix_{DateTime.UtcNow:yyyyMMdd}.xlsx";
+            return File(fileBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+        }
+
     }
 }

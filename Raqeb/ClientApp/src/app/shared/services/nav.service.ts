@@ -104,8 +104,11 @@ export class NavService implements OnDestroy {
       // badgeValue: "New",
       active: true,
       children: [
-        { path: "/PD/list", title: "PDList", type: "link" },
-        { path: "/PD/form", title: "CreatePD", type: "link" },
+        { path: "/PD/list", title: "PD List", type: "link" },
+        // { path: "/PD/form", title: "Create PD", type: "link" },
+        { path: "/PD/display-transition-matrix", title: "Transition Matrix", type: "link" },
+        { path: "/PD/yearly-avg-transition-matrix", title: "Yearly Avg Transition Matrix", type: "link" },
+        { path: "/PD/long-run-matrix", title: "Long Run Matrix", type: "link" },
       ],
     },
     // {

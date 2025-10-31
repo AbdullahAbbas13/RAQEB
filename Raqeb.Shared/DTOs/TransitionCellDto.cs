@@ -5,6 +5,6 @@
     {
         public int FromGrade { get; set; }
         public int ToGrade { get; set; }
-        public int Count { get; set; }
+        public double Count { get; set; }
     }
 }

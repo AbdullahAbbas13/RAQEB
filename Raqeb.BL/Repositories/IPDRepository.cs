@@ -1,4 +1,5 @@
 ﻿using EFCore.BulkExtensions;
+using Microsoft.EntityFrameworkCore;
 using OfficeOpenXml;
 using Raqeb.Shared.DTOs;
 using Raqeb.Shared.Models;
@@ -50,6 +51,13 @@ namespace Raqeb.BL.Repositories
         ApiResponse<double> CalculateObservedDefaultRateFromMemory(List<List<double>> transitionMatrix);
 
        Task<PagedResult<PDTransitionMatrixDto>> GetTransitionMatricesPagedAsync(PDMatrixFilterDto filter);
+        Task<byte[]> ExportTransitionMatrixToExcelAsync(PDMatrixFilterDto filter);
+        Task<List<TransitionMatrixDto>> CalculateYearlyAverageTransitionMatricesAsync(PDMatrixFilterDto filter);
+        Task<byte[]> ExportYearlyAverageToExcelAsync(PDMatrixFilterDto filter);
+        Task<TransitionMatrixDto> CalculateLongRunAverageTransitionMatrixAsync();
+
+        Task<byte[]> ExportLongRunToExcelAsync();
+
     }
 
     // ============================================================
@@ -1256,6 +1264,440 @@ namespace Raqeb.BL.Repositories
             };
         }
 
+
+        public async Task<byte[]> ExportTransitionMatrixToExcelAsync(PDMatrixFilterDto filter)
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+
+            var matrices = await GetTransitionMatricesPagedAsync(filter);
+            if (matrices == null || !matrices.Items.Any())
+                return Array.Empty<byte>();
+
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("PD Transition Matrices");
+
+            int startRow = 1;
+            int startCol = 1;
+            int tableWidth = 7;
+            int tableHeight = 8;
+
+            int tablesPerRow = 3; // ← عدد الجداول في كل صف أفقي
+            int tableIndex = 0;
+
+            foreach (var matrix in matrices.Items)
+            {
+                // حساب موقع الجدول
+                int tableRow = tableIndex / tablesPerRow;
+                int tableCol = tableIndex % tablesPerRow;
+
+                int top = startRow + (tableRow * (tableHeight + 2));
+                int left = startCol + (tableCol * (tableWidth + 2));
+
+                // العنوان الرئيسي (مثلاً Jan/15 -> Jan/16)
+                string title = $"{new DateTime(matrix.Year, matrix.Month, 1):MMM/yy} → {new DateTime(matrix.Year, matrix.Month, 1).AddYears(1):MMM/yy}";
+                ws.Cells[top, left, top, left + 6].Merge = true;
+                ws.Cells[top, left].Value = title;
+                ws.Cells[top, left].Style.Font.Bold = true;
+                ws.Cells[top, left].Style.Font.Color.SetColor(System.Drawing.Color.White);
+                ws.Cells[top, left].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                ws.Cells[top, left].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.DarkGreen);
+                ws.Cells[top, left].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+
+                // رؤوس الأعمدة
+                string[] headers = { "From\\To", "1", "2", "3", "4", "Total", "PD" };
+                for (int i = 0; i < headers.Length; i++)
+                {
+                    ws.Cells[top + 1, left + i].Value = headers[i];
+                    ws.Cells[top + 1, left + i].Style.Font.Bold = true;
+                    ws.Cells[top + 1, left + i].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    ws.Cells[top + 1, left + i].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(0, 32, 96)); // Navy Blue
+                    ws.Cells[top + 1, left + i].Style.Font.Color.SetColor(System.Drawing.Color.White);
+                    ws.Cells[top + 1, left + i].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+                }
+
+                // الصفوف (FromGrade)
+                for (int r = 1; r <= 4; r++)
+                {
+                    int row = top + 1 + r;
+                    ws.Cells[row, left].Value = r;
+                    ws.Cells[row, left].Style.Font.Bold = true;
+                    ws.Cells[row, left].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    ws.Cells[row, left].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(0, 32, 96)); // Navy
+                    ws.Cells[row, left].Style.Font.Color.SetColor(System.Drawing.Color.White);
+
+                    // الأعمدة (ToGrade)
+                    for (int c = 1; c <= 4; c++)
+                    {
+                        var cellData = matrix.Cells.FirstOrDefault(x => x.FromGrade == r && x.ToGrade == c);
+                        ws.Cells[row, left + c].Value = cellData?.Count ?? 0;
+                        ws.Cells[row, left + c].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+                    }
+
+                    // الإجمالي (Total)
+                    var total = matrix.Cells.Where(x => x.FromGrade == r).Sum(x => x.Count);
+                    ws.Cells[row, left + 5].Value = total;
+                    ws.Cells[row, left + 5].Style.Font.Bold = true;
+
+                    // PD%
+                    var pd = matrix.RowStats.FirstOrDefault(x => x.FromGrade == r)?.PDPercent ?? 0;
+                    ws.Cells[row, left + 6].Value = $"{pd:0.0}%";
+                    ws.Cells[row, left + 6].Style.Font.Bold = true;
+                    ws.Cells[row, left + 6].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    ws.Cells[row, left + 6].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.DarkRed);
+                    ws.Cells[row, left + 6].Style.Font.Color.SetColor(System.Drawing.Color.White);
+                    ws.Cells[row, left + 6].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+                }
+
+                // صف الإجماليات
+                int totalRow = top + 6;
+                ws.Cells[totalRow, left].Value = "Total";
+                ws.Cells[totalRow, left].Style.Font.Bold = true;
+                ws.Cells[totalRow, left].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                ws.Cells[totalRow, left].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(0, 32, 96));
+                ws.Cells[totalRow, left].Style.Font.Color.SetColor(System.Drawing.Color.White);
+
+                for (int c = 1; c <= 4; c++)
+                {
+                    var totalCol = matrix.Cells.Where(x => x.ToGrade == c).Sum(x => x.Count);
+                    ws.Cells[totalRow, left + c].Value = totalCol;
+                    ws.Cells[totalRow, left + c].Style.Font.Bold = true;
+                }
+
+                var grandTotal = matrix.Cells.Sum(x => x.Count);
+                ws.Cells[totalRow, left + 5].Value = grandTotal;
+                ws.Cells[totalRow, left + 5].Style.Font.Bold = true;
+
+                var avgPD = matrix.RowStats.Any() ? matrix.RowStats.Average(x => x.PDPercent) : 0;
+                ws.Cells[totalRow, left + 6].Value = $"{avgPD:0.0}%";
+                ws.Cells[totalRow, left + 6].Style.Font.Bold = true;
+                ws.Cells[totalRow, left + 6].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                ws.Cells[totalRow, left + 6].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.DarkRed);
+                ws.Cells[totalRow, left + 6].Style.Font.Color.SetColor(System.Drawing.Color.White);
+
+                // حدود الجدول
+                using (var range = ws.Cells[top, left, totalRow, left + 6])
+                {
+                    range.Style.Border.BorderAround(OfficeOpenXml.Style.ExcelBorderStyle.Thin, System.Drawing.Color.Black);
+                    range.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                    range.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                    range.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                    range.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                }
+
+                tableIndex++;
+            }
+
+            ws.Cells.AutoFitColumns();
+            return await package.GetAsByteArrayAsync();
+        }
+
+        public async Task<List<TransitionMatrixDto>> CalculateYearlyAverageTransitionMatricesAsync(PDMatrixFilterDto filter)
+        {
+            var query = _uow.DbContext.PDMonthlyTransitionCells
+                .Where(c => c.PoolId == filter.PoolId && c.ColumnIndex >= 0);
+
+            if (filter.Year.HasValue)
+                query = query.Where(c => c.Year == filter.Year.Value);
+
+            var allCells = await query.ToListAsync();
+            if (!allCells.Any())
+                return new List<TransitionMatrixDto>();
+
+            // 🧮 نجمع حسب السنة (لو الفلتر فيه سنة واحدة هتبقى مجموعة واحدة)
+            var result = new List<TransitionMatrixDto>();
+
+            foreach (var yearGroup in allCells.GroupBy(c => c.Year))
+            {
+                // بناء قاموس (from,to) => المتوسط
+                var grouped = yearGroup
+                    .GroupBy(c => new { c.RowIndex, c.ColumnIndex })
+                    .ToDictionary(
+                        g => (g.Key.RowIndex, g.Key.ColumnIndex),
+                        g => Math.Round(g.Average(x => x.Value), 2)
+                    );
+
+                var avgCells = new List<TransitionCellDto>();
+
+                // ✅ بناء مصفوفة 4×4 حتى لو مفيش بيانات
+                for (int from = 1; from <= 4; from++)
+                {
+                    for (int to = 1; to <= 4; to++)
+                    {
+                        double value = grouped.TryGetValue((from - 1, to - 1), out double v) ? v : 0;
+                        avgCells.Add(new TransitionCellDto
+                        {
+                            FromGrade = from,
+                            ToGrade = to,
+                            Count = value
+                        });
+                    }
+                }
+
+                // 📊 حساب الإجماليات و PD لكل صف
+                var rowStats = avgCells
+                    .GroupBy(x => x.FromGrade)
+                    .Select(g =>
+                    {
+                        var total = g.Sum(x => x.Count);
+                        var pd = g.FirstOrDefault(x => x.ToGrade == 4)?.Count ?? 0;
+                        var pdPercent = total > 0 ? Math.Round((pd / total) * 100, 1) : 0;
+                        return new RowStatDto
+                        {
+                            FromGrade = g.Key,
+                            TotalCount = (int)total,
+                            PDPercent = pdPercent
+                        };
+                    })
+                    .ToList();
+
+                result.Add(new TransitionMatrixDto
+                {
+                    Year = yearGroup.Key,
+                    Title = $"Yearly Average Transition Matrix - {yearGroup.Key}",
+                    IsYearlyAverage = true,
+                    Cells = avgCells,
+                    RowStats = rowStats
+                });
+            }
+
+            return result;
+        }
+
+
+        public async Task<byte[]> ExportYearlyAverageToExcelAsync(PDMatrixFilterDto filter)
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+
+            // 🧩 استدعاء المصفوفات السنوية المحسوبة
+            List<TransitionMatrixDto> matrices = await CalculateYearlyAverageTransitionMatricesAsync(filter);
+
+            if (matrices == null || matrices.Count == 0)
+                return Array.Empty<byte>();
+
+
+            using var package = new ExcelPackage();
+
+            foreach (var matrix in matrices)
+            {
+                if (matrix.Cells == null || matrix.Cells.Count == 0)
+                    continue;
+
+                var ws = package.Workbook.Worksheets.Add($"Year_{matrix.Year}");
+                int startRow = 1;
+
+                // 🏷️ العنوان الرئيسي
+                ws.Cells[startRow, 1].Value = matrix.Title;
+                ws.Cells[startRow, 1, startRow, 6].Merge = true;
+                ws.Cells[startRow, 1].Style.Font.Bold = true;
+                ws.Cells[startRow, 1].Style.Font.Size = 14;
+                ws.Cells[startRow, 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+                ws.Cells[startRow, 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                ws.Cells[startRow, 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.DarkBlue);
+                ws.Cells[startRow, 1].Style.Font.Color.SetColor(System.Drawing.Color.White);
+
+                startRow += 2;
+
+                // 🧱 عناوين الأعمدة
+                string[] headers = { "FromGrade", "ToGrade", "Count", "Total", "PD%" };
+                for (int i = 0; i < headers.Length; i++)
+                {
+                    ws.Cells[startRow, i + 1].Value = headers[i];
+                    ws.Cells[startRow, i + 1].Style.Font.Bold = true;
+                    ws.Cells[startRow, i + 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    ws.Cells[startRow, i + 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.LightGray);
+                    ws.Cells[startRow, i + 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+                }
+
+                int row = startRow;
+
+                // 📊 تعبئة بيانات الخلايا
+                foreach (var cell in matrix.Cells.OrderBy(x => x.FromGrade).ThenBy(x => x.ToGrade))
+                {
+                    row++;
+                    ws.Cells[row, 1].Value = cell.FromGrade;
+                    ws.Cells[row, 2].Value = cell.ToGrade;
+                    ws.Cells[row, 3].Value = cell.Count;
+                }
+
+                // 📈 حساب الإجماليات (Totals + PD)
+                row++;
+                ws.Cells[row, 1].Value = "Totals";
+                ws.Cells[row, 1].Style.Font.Bold = true;
+
+                foreach (var stat in matrix.RowStats.OrderBy(s => s.FromGrade))
+                {
+                    row++;
+                    ws.Cells[row, 1].Value = stat.FromGrade;
+                    ws.Cells[row, 4].Value = stat.TotalCount;
+                    ws.Cells[row, 5].Value = stat.PDPercent / 100; // تحويل النسبة إلى نسبة مئوية في Excel
+                    ws.Cells[row, 5].Style.Numberformat.Format = "0.0%";
+
+                    // لون العمود الأحمر لـ PD
+                    ws.Cells[row, 5].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    ws.Cells[row, 5].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.DarkRed);
+                    ws.Cells[row, 5].Style.Font.Color.SetColor(System.Drawing.Color.White);
+                }
+
+                // 🎨 تنسيق الجدول
+                ws.Cells.AutoFitColumns();
+                ws.View.ShowGridLines = false;
+                ws.Cells.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
+                ws.Cells.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+            }
+
+            // 💾 تحويل الملف إلى bytes
+            return await package.GetAsByteArrayAsync();
+        }
+
+        public async Task<TransitionMatrixDto> CalculateLongRunAverageTransitionMatrixAsync()
+        {
+            // 🧱 اجلب كل البيانات الموجودة في الجدول (كل Pools وكل السنوات)
+            var allCells = await _uow.DbContext.PDMonthlyTransitionCells.ToListAsync();
+
+            if (!allCells.Any())
+                return null;
+
+            // 🧮 تجميع المتوسط لجميع البيانات (بدون أي شروط)
+            var grouped = allCells
+                .GroupBy(c => new { c.RowIndex, c.ColumnIndex })
+                .Select(g => new
+                {
+                    From = g.Key.RowIndex + 1,
+                    To = g.Key.ColumnIndex,
+                    AvgValue = Math.Round(g.Average(x => x.Value), 4)
+                })
+                .ToList();
+
+            // ✅ بناء المصفوفة 4×4 (حتى لو بعض الخلايا فاضية)
+            var avgCells = grouped
+                .Where(g => g.To >= 0)
+                .Select(g => new TransitionCellDto
+                {
+                    FromGrade = g.From,
+                    ToGrade = g.To + 1,
+                    Count = g.AvgValue
+                })
+                .ToList();
+
+            // 📊 حساب الإجماليات و PD%
+            var rowStats = avgCells
+                .GroupBy(x => x.FromGrade)
+                .Select(g =>
+                {
+                    var total = g.Sum(x => x.Count);
+                    var pd = g.FirstOrDefault(x => x.ToGrade == 4)?.Count ?? 0;
+                    var pdPercent = total > 0 ? Math.Round((pd / total) * 100, 2) : 0;
+                    return new RowStatDto
+                    {
+                        FromGrade = g.Key,
+                        TotalCount = (int)total,
+                        PDPercent = pdPercent
+                    };
+                })
+                .ToList();
+
+            return new TransitionMatrixDto
+            {
+                Title = "Global Long Run Average Transition Matrix (All Pools, All Years)",
+                Year = 0,
+                IsYearlyAverage = false,
+                Cells = avgCells,
+                RowStats = rowStats
+            };
+        }
+
+
+        public async Task<byte[]> ExportLongRunToExcelAsync()
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+
+            // 🧮 احسب مصفوفة Long Run من كل البيانات (بدون فلتر)
+            var matrix = await CalculateLongRunAverageTransitionMatrixAsync();
+            if (matrix == null || matrix.Cells == null || !matrix.Cells.Any())
+                return Array.Empty<byte>();
+
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("Long Run Matrix");
+
+            int startRow = 1;
+
+            // 🏷️ عنوان رئيسي
+            ws.Cells[startRow, 1].Value = matrix.Title;
+            ws.Cells[startRow, 1, startRow, 7].Merge = true;
+            ws.Cells[startRow, 1].Style.Font.Bold = true;
+            ws.Cells[startRow, 1].Style.Font.Size = 14;
+            ws.Cells[startRow, 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+            startRow += 2;
+
+            // 🧱 رؤوس الأعمدة
+            string[] headers = { "From Grade ↓ / To Grade →", "1", "2", "3", "4", "Total", "PD%" };
+            for (int i = 0; i < headers.Length; i++)
+            {
+                ws.Cells[startRow, i + 1].Value = headers[i];
+                ws.Cells[startRow, i + 1].Style.Font.Bold = true;
+                ws.Cells[startRow, i + 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                ws.Cells[startRow, i + 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.LightSteelBlue);
+                ws.Cells[startRow, i + 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+            }
+
+            int row = startRow;
+
+            // 🧮 تعبئة المصفوفة 4×4
+            foreach (var fromGrade in Enumerable.Range(1, 4))
+            {
+                row++;
+                ws.Cells[row, 1].Value = fromGrade;
+                ws.Cells[row, 1].Style.Font.Bold = true;
+
+                for (int toGrade = 1; toGrade <= 4; toGrade++)
+                {
+                    var cell = matrix.Cells.FirstOrDefault(c => c.FromGrade == fromGrade && c.ToGrade == toGrade);
+                    ws.Cells[row, toGrade + 1].Value = Math.Round(cell?.Count ?? 0, 2);
+                }
+
+                // 📊 إجمالي و PD%
+                var stat = matrix.RowStats.FirstOrDefault(r => r.FromGrade == fromGrade);
+                ws.Cells[row, 6].Value = stat?.TotalCount ?? 0;
+                ws.Cells[row, 7].Value = stat?.PDPercent ?? 0;
+                ws.Cells[row, 7].Style.Numberformat.Format = "0.0";
+            }
+
+            // 🟦 صف الإجماليات في النهاية
+            row++;
+            ws.Cells[row, 1].Value = "Total";
+            ws.Cells[row, 1].Style.Font.Bold = true;
+
+            for (int to = 1; to <= 4; to++)
+            {
+                var totalForCol = matrix.Cells.Where(c => c.ToGrade == to).Sum(c => c.Count);
+                ws.Cells[row, to + 1].Value = Math.Round(totalForCol, 2);
+                ws.Cells[row, to + 1].Style.Font.Bold = true;
+            }
+
+            var grandTotal = matrix.RowStats.Sum(r => r.TotalCount);
+            ws.Cells[row, 6].Value = grandTotal;
+            ws.Cells[row, 6].Style.Font.Bold = true;
+            ws.Cells[row, 7].Value = 100;
+            ws.Cells[row, 7].Style.Font.Bold = true;
+            ws.Cells[row, 7].Style.Numberformat.Format = "0.0";
+
+            // 🎨 تنسيقات عامة
+            ws.Cells.AutoFitColumns();
+            ws.View.ShowGridLines = false;
+            ws.Cells.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+            ws.Cells.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
+
+            // 🧱 حدود الجدول
+            using (var range = ws.Cells[startRow, 1, row, 7])
+            {
+                range.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                range.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                range.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                range.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+            }
+
+            return await package.GetAsByteArrayAsync();
+        }
 
     }
 }
