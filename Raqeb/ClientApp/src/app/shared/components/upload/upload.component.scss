@@ -1,0 +1,669 @@
+
+// Variables
+$primary-color: #667eea;
+$primary-dark: #5568d3;
+$primary-light: #7c91f7;
+$secondary-color: #764ba2;
+$success-color: #48bb78;
+$danger-color: #f56565;
+$warning-color: #ed8936;
+
+$text-dark: #2d3748;
+$text-light: #718096;
+$text-muted: #a0aec0;
+
+$bg-light: #f7fafc;
+$bg-white: #ffffff;
+$border-color: #e2e8f0;
+
+$shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+$shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+$shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+$shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.1);
+
+$transition-fast: all 0.2s ease;
+$transition-normal: all 0.3s ease;
+$transition-slow: all 0.4s ease;
+
+// Mixins
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin gradient-bg($color1, $color2) {
+  background: linear-gradient(135deg, $color1 0%, $color2 100%);
+}
+
+@mixin glass-effect {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+// Main Container
+.lgd-upload-container {
+  min-height: calc(100vh - 100px);
+  padding: 1.5rem; // تم تصغير التباعد العام
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  @include flex-center;
+  position: relative;
+  
+  // Animated background pattern
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: 
+      radial-gradient(circle at 20% 50%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+      radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
+    animation: gradientShift 15s ease infinite;
+  }
+}
+
+@keyframes gradientShift {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+// Upload Card
+.upload-card {
+  background: $bg-white;
+  border-radius: 16px; // بدلًا من 24px
+  box-shadow: $shadow-lg; // بدلًا من shadow-xl
+  max-width: 600px; // بدلًا من 800px
+  width: 90%; // لتصغير الحجم النسبي أيضًا
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+  animation: slideUp 0.5s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// Header Section
+.upload-header {
+  @include gradient-bg($primary-color, $secondary-color);
+  padding: 2rem 1.5rem; // تم تقليل التباعد
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px; // أصغر قليلًا
+    background: linear-gradient(90deg, 
+      transparent 0%, 
+      rgba(255, 255, 255, 0.5) 50%, 
+      transparent 100%);
+  }
+}
+
+.logo-section {
+  position: relative;
+  z-index: 1;
+  
+  .logo-circle {
+      width: 70px; // بدل 90px
+    height: 70px;
+    @include flex-center;
+    margin: 0 auto 1.5rem;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    backdrop-filter: blur(10px);
+    transition: $transition-normal;
+    
+    i {
+      font-size: 2.5rem;
+      color: white;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    
+    &:hover {
+      transform: scale(1.1) rotate(5deg);
+      background: rgba(255, 255, 255, 0.3);
+    }
+  }
+  
+  h2 {
+    color: white;
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+  
+  p {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 1.1rem;
+    margin: 0;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+// Content Section
+.upload-content {
+  padding: 1.5rem; // تم تقليل التباعد
+}
+
+// Steps Section
+.steps-section {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2.5rem;
+  padding: 0 1rem;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  transition: $transition-normal;
+  
+  .step-number {
+    width: 50px;
+    height: 50px;
+    @include flex-center;
+    border-radius: 50%;
+    background: $border-color;
+    color: $text-muted;
+    font-weight: 700;
+    font-size: 1.2rem;
+    transition: $transition-normal;
+    position: relative;
+    
+    &::after {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      transition: $transition-normal;
+    }
+  }
+  
+  .step-text {
+    font-size: 0.9rem;
+    color: $text-light;
+    font-weight: 500;
+    transition: $transition-normal;
+  }
+  
+  &.active {
+    .step-number {
+      @include gradient-bg($primary-color, $secondary-color);
+      color: white;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      animation: stepPulse 1.5s ease-in-out infinite;
+      
+      &::after {
+        border-color: rgba(102, 126, 234, 0.3);
+        animation: ripple 1.5s ease-out infinite;
+      }
+    }
+    
+    .step-text {
+      color: $primary-color;
+      font-weight: 600;
+    }
+  }
+}
+
+@keyframes stepPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes ripple {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+.step-connector {
+  width: 80px;
+  height: 2px;
+  background: $border-color;
+  margin: 0 1rem;
+  position: relative;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, $primary-color, $secondary-color);
+    transition: width 0.5s ease;
+  }
+}
+
+.step.active ~ .step-connector::after {
+  width: 100%;
+}
+
+// Dropzone
+.dropzone {
+  border: 3px dashed $border-color;
+  border-radius: 16px;
+  padding: 3rem 2rem;
+  text-align: center;
+  transition: $transition-normal;
+  background: $bg-light;
+  position: relative;
+  overflow: hidden;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, 
+      transparent, 
+      rgba(102, 126, 234, 0.1), 
+      transparent);
+    transition: $transition-slow;
+  }
+  
+  &:hover:not(.disabled) {
+    border-color: $primary-color;
+    background: rgba(102, 126, 234, 0.05);
+    transform: translateY(-2px);
+    box-shadow: $shadow-md;
+    
+    &::before {
+      left: 100%;
+    }
+  }
+  
+  &.active {
+    border-color: $success-color;
+    background: rgba(72, 187, 120, 0.05);
+    border-style: solid;
+  }
+  
+  &.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.file-input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  opacity: 0;
+  cursor: pointer;
+  
+  &:disabled {
+    cursor: not-allowed;
+  }
+}
+
+// Upload Placeholder
+.upload-placeholder {
+  pointer-events: none;
+  
+  i {
+    font-size: 4rem;
+    color: $primary-color;
+    margin-bottom: 1rem;
+    display: block;
+    animation: float 3s ease-in-out infinite;
+  }
+  
+  h3 {
+    color: $text-dark;
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+  }
+  
+  p {
+    color: $text-light;
+    margin: 1rem 0;
+  }
+  
+  .browse-btn {
+    background: linear-gradient(135deg, $primary-color, $secondary-color);
+    color: white;
+    border: none;
+    padding: 0.875rem 2.5rem;
+    border-radius: 50px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: $transition-normal;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    pointer-events: all;
+    
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    &:active {
+      transform: translateY(0);
+    }
+  }
+  
+  .file-types {
+    margin-top: 1.5rem;
+    color: $text-muted;
+    font-size: 0.875rem;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+// File Selected
+.file-selected {
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.file-preview {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  box-shadow: $shadow-sm;
+  transition: $transition-normal;
+  
+  &:hover {
+    box-shadow: $shadow-md;
+    transform: translateY(-2px);
+  }
+  
+  .file-icon {
+    font-size: 3rem;
+    color: $success-color;
+    animation: scaleIn 0.4s ease;
+  }
+  
+  .file-details {
+    flex: 1;
+    text-align: left;
+    
+    h4 {
+      color: $text-dark;
+      font-size: 1.1rem;
+      margin: 0 0 0.25rem 0;
+      font-weight: 600;
+    }
+    
+    p {
+      color: $text-light;
+      margin: 0;
+      font-size: 0.9rem;
+    }
+  }
+  
+  .remove-file {
+    width: 36px;
+    height: 36px;
+    @include flex-center;
+    border: none;
+    background: $danger-color;
+    color: white;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: $transition-fast;
+    
+    &:hover {
+      background: darken($danger-color, 10%);
+      transform: rotate(90deg) scale(1.1);
+    }
+  }
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+
+// Action Section
+.action-section {
+  margin-top: 2rem;
+  text-align: center;
+}
+
+.calculate-btn {
+  @include gradient-bg($primary-color, $secondary-color);
+  color: white;
+  border: none;
+  padding: 1rem 3rem;
+  border-radius: 50px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: $transition-normal;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  position: relative;
+  overflow: hidden;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+  }
+  
+  &:hover:not(:disabled) {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 25px rgba(102, 126, 234, 0.4);
+    
+    &::before {
+      width: 300px;
+      height: 300px;
+    }
+  }
+  
+  &:active:not(:disabled) {
+    transform: translateY(-1px);
+  }
+  
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+  }
+  
+  &.processing {
+    animation: processing 1.5s ease-in-out infinite;
+  }
+  
+  i, span {
+    position: relative;
+    z-index: 1;
+  }
+}
+
+@keyframes processing {
+  0%, 100% { box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3); }
+  50% { box-shadow: 0 4px 25px rgba(102, 126, 234, 0.6); }
+}
+
+// Info Section
+.info-section {
+  margin-top: 2.5rem;
+  padding-top: 2rem;
+  border-top: 1px solid $border-color;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: $text-light;
+  font-size: 0.95rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  transition: $transition-fast;
+  
+  i {
+    color: $primary-color;
+    font-size: 1.25rem;
+  }
+  
+  &:hover {
+    background: $bg-light;
+    transform: translateX(5px);
+  }
+}
+
+// Responsive Design
+@media (max-width: 768px) {
+  .lgd-upload-container {
+    padding: 1rem;
+  }
+  
+  .upload-card {
+    border-radius: 16px;
+  }
+  
+  .upload-header {
+    padding: 2rem 1.5rem;
+    
+    .logo-circle {
+      width: 70px;
+      height: 70px;
+      
+      i {
+        font-size: 2rem;
+      }
+    }
+    
+    h2 {
+      font-size: 1.5rem;
+    }
+    
+    p {
+      font-size: 1rem;
+    }
+  }
+  
+  .upload-content {
+    padding: 1.5rem;
+  }
+  
+  .steps-section {
+    .step {
+      .step-number {
+        width: 40px;
+        height: 40px;
+        font-size: 1rem;
+      }
+      
+      .step-text {
+        font-size: 0.8rem;
+      }
+    }
+    
+    .step-connector {
+      width: 50px;
+      margin: 0 0.5rem;
+    }
+  }
+  
+  .dropzone {
+    padding: 2rem 1rem;
+  }
+  
+  .upload-placeholder {
+    i {
+      font-size: 3rem;
+    }
+    
+    h3 {
+      font-size: 1.25rem;
+    }
+  }
+  
+  .calculate-btn {
+    padding: 0.875rem 2rem;
+    font-size: 1rem;
+  }
+}
+
+// Dark mode support (optional)
+@media (prefers-color-scheme: dark) {
+  .upload-card {
+    background: #1a202c;
+    color: #e2e8f0;
+  }
+  
+  .dropzone {
+    background: #2d3748;
+    border-color: #4a5568;
+  }
+  
+  .file-preview {
+    background: #2d3748;
+  }
+  
+  .info-section {
+    border-color: #4a5568;
+  }
+  
+  .info-item:hover {
+    background: #2d3748;
+  }
+}
