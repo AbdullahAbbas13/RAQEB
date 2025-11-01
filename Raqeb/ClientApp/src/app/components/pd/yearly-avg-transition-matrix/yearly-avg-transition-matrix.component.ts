@@ -32,7 +32,7 @@ export class YearlyAvgTransitionMatrixComponent implements OnInit {
 
   ngOnInit() {
   const currentYear = new Date().getFullYear();
-    for (let year = 2015; year <= currentYear; year++) {
+    for (let year = 2015; year <= 2021; year++) {
       this.years.push(year);
     }
     this.loadData();

@@ -42,17 +42,18 @@ namespace Raqeb.BL.Repositories
         ApiResponse<List<List<double>>> CalculateTransitionMatrixFromMemory(Pool pool, List<Customer> customers);
 
         // 🧠 حساب المصفوفة المتوسطة من الذاكرة
-        ApiResponse<List<List<double>>> CalculateAverageTransitionMatrixFromMemory(List<List<double>> transitionMatrix);
+        //ApiResponse<List<List<double>>> CalculateAverageTransitionMatrixFromMemory(List<List<double>> transitionMatrix);
 
-        // 🧠 حساب مصفوفة المدى الطويل من الذاكرة
-        ApiResponse<List<List<double>>> CalculateLongRunMatrixFromMemory(List<List<double>> transitionMatrix);
+        //// 🧠 حساب مصفوفة المدى الطويل من الذاكرة
+        //ApiResponse<List<List<double>>> CalculateLongRunMatrixFromMemory(List<List<double>> transitionMatrix);
 
-        // 🧠 حساب معدل التعثر الفعلي من الذاكرة
-        ApiResponse<double> CalculateObservedDefaultRateFromMemory(List<List<double>> transitionMatrix);
+        //// 🧠 حساب معدل التعثر الفعلي من الذاكرة
+        //ApiResponse<double> CalculateObservedDefaultRateFromMemory(List<List<double>> transitionMatrix);
 
-       Task<PagedResult<PDTransitionMatrixDto>> GetTransitionMatricesPagedAsync(PDMatrixFilterDto filter);
+        Task<PagedResult<PDTransitionMatrixDto>> GetTransitionMatricesPagedAsync(PDMatrixFilterDto filter);
         Task<byte[]> ExportTransitionMatrixToExcelAsync(PDMatrixFilterDto filter);
-        Task<List<TransitionMatrixDto>> CalculateYearlyAverageTransitionMatricesAsync(PDMatrixFilterDto filter);
+        Task<List<TransitionMatrixDto>> GetYearlyAverageTransitionMatricesAsync(PDMatrixFilterDto filter);
+
         Task<byte[]> ExportYearlyAverageToExcelAsync(PDMatrixFilterDto filter);
         Task<TransitionMatrixDto> CalculateLongRunAverageTransitionMatrixAsync();
 
@@ -133,33 +134,34 @@ namespace Raqeb.BL.Repositories
 
                         // 🧠 حساب المصفوفات النهائية
                         var transition = CalculateTransitionMatrixFromMemory(pool, customers);
-                        var yearlyAverage = CalculateYearlyAverageTransitionMatrixFromMemory(monthlyTransitions);
-                        var average = CalculateAverageTransitionMatrixFromMemory(transition.Data);
-                        var longRun = CalculateLongRunMatrixFromMemory(transition.Data);
-                        var odr = CalculateObservedDefaultRateFromMemory(transition.Data);
+                        await CalculateAllYearlyAverageTransitionMatricesAsync();
 
-                        // 💾 حفظ النتائج النهائية في قاعدة البيانات
-                        await SaveCalculatedMatricesAsync(
+                         //var average = CalculateAverageTransitionMatrixFromMemory(transition.Data);
+                         //var longRun = CalculateLongRunMatrixFromMemory(transition.Data);
+                         //var odr = CalculateObservedDefaultRateFromMemory(transition.Data);
+
+                         // 💾 حفظ النتائج النهائية في قاعدة البيانات
+                         await SaveCalculatedMatricesAsync(
                             pool,
                             newVersion,
                             transition,
-                            average,
-                            longRun,
-                            odr,
+                            //average,
+                            //longRun,
+                            //odr,
                             bulkConfig,
-                            yearlyAverage,
+                            //yearlyAverage,
                             currentYear
                         );
 
-                        // 📊 تصدير النتائج إلى Excel
-                        string exportFilePath = await ExportResultsToExcelAsync(
-                            pool,
-                            newVersion,
-                            transition,
-                            average,
-                            longRun,
-                            odr
-                        );
+                        //// 📊 تصدير النتائج إلى Excel
+                        //string exportFilePath = await ExportResultsToExcelAsync(
+                        //    pool,
+                        //    newVersion,
+                        //    transition,
+                        //    average,
+                        //    longRun,
+                        //    odr
+                        //);
 
                         // 🧹 تنظيف الملفات المؤقتة
                         if (File.Exists(tempFilePath))
@@ -169,7 +171,7 @@ namespace Raqeb.BL.Repositories
 
                         return ApiResponse<string>.SuccessResponse(
                             $"✅ PD Calculations completed successfully for Pool {pool.Name} (Version {newVersion})",
-                            exportFilePath
+                            null
                         );
                     }
                     catch (Exception ex)
@@ -286,39 +288,80 @@ namespace Raqeb.BL.Repositories
 
 
         public async Task<int> SaveYoYTransitionSnapshotsAsync(
-    Pool pool,
-    int newVersion,
-    IEnumerable<Customer> customers,
-    BulkConfig bulkConfig,
-    int minGrade = 1,
-    int maxGrade = 4,
-    int? defaultGrade = null)
+            Pool pool,
+            int newVersion,
+            IEnumerable<Customer> customers,
+            BulkConfig bulkConfig,
+            int minGrade = 1,
+            int maxGrade = 4,
+            int? defaultGrade = null)
         {
+            // 🧭 1️⃣ تجميع كل الشهور اللي ظهرت في بيانات العملاء (بداية كل شهر فقط)
             var allMonths = customers
                 .SelectMany(c => c.Grades.Select(g => new DateTime(g.Month.Year, g.Month.Month, 1)))
                 .Distinct()
                 .OrderBy(d => d)
                 .ToList();
 
+            // 🧩 إنشاء قائمة بالشهور الكاملة (من أول شهر إلى آخر شهر بدون فجوات)
+            if (allMonths.Any())
+            {
+                var firstMonth = allMonths.First();
+                var lastMonth = allMonths.Last();
+                var completeMonths = new List<DateTime>();
+
+                for (var date = firstMonth; date <= lastMonth; date = date.AddMonths(1))
+                    completeMonths.Add(new DateTime(date.Year, date.Month, 1));
+
+                allMonths = completeMonths;
+            }
+
+            // ⚙️ تجهيز الهياكل
             var setMonths = new HashSet<DateTime>(allMonths);
             var transitionCells = new List<PDMonthlyTransitionCell>();
             var rowStats = new List<PDMonthlyRowStat>();
             int size = (maxGrade - minGrade + 1);
 
+            // 🔁 2️⃣ المرور على كل شهر حتى لو مفيهوش داتا (هيسجّل 0)
             foreach (var from in allMonths)
             {
                 var to = from.AddYears(1);
-                if (!setMonths.Contains(to)) continue;
+                bool hasNextYearMonth = setMonths.Contains(to);
 
-                var res = CalculateTransitionCounts(customers, from, to, minGrade, maxGrade, defaultGrade);
+                // لو الشهر المقابل مش موجود → نعمل مصفوفة فاضية بالقيم صفر
+                TransitionCountsResult res;
+                if (hasNextYearMonth)
+                {
+                    // ✅ الدالة دي فعلاً بترجع TransitionCountsResult
+                    res = CalculateTransitionCounts(customers, from, to, minGrade, maxGrade, defaultGrade);
+                }
+                else
+                {
+                    // 🧱 إنشاء نسخة فارغة (شهر بدون بيانات)
+                    int[,] counts = new int[size, size];
+                    int[] rowTotals = new int[size];
+                    double[] rowPD = new double[size];
 
+                    // تهيئة القيم كلها بـ 0
+                    for (int r = 0; r < size; r++)
+                    {
+                        for (int c = 0; c < size; c++)
+                            counts[r, c] = 0;
+
+                        rowTotals[r] = 0;
+                        rowPD[r] = 0;
+                    }
+
+                    res = new TransitionCountsResult(counts, rowTotals, rowPD, minGrade, maxGrade);
+                }
+
+
+                // 🧮 3️⃣ حفظ كل خلايا الانتقال (من → إلى)
                 for (int r = 0; r < size; r++)
                 {
                     for (int c = 0; c < size; c++)
                     {
-                        int count = res.Counts[r, c];
-                        if (count == 0) continue;
-
+                        int count = res.Counts[r, c]; // حتى لو 0 هيتسجل دلوقتي
                         transitionCells.Add(new PDMonthlyTransitionCell
                         {
                             PoolId = pool.Id,
@@ -334,7 +377,7 @@ namespace Raqeb.BL.Repositories
                     }
                 }
 
-                // 🔹 PD لكل صف كنسبة مئوية
+                // 📊 4️⃣ حفظ إحصائيات الـ PD لكل صف حتى لو قيمها 0
                 for (int r = 0; r < size; r++)
                 {
                     int total = res.RowTotals[r];
@@ -356,6 +399,7 @@ namespace Raqeb.BL.Repositories
                 }
             }
 
+            // 💾 5️⃣ حفظ جميع البيانات دفعة واحدة
             if (transitionCells.Any())
             {
                 await _uow.DbContext.BulkInsertAsync(transitionCells, bulkConfig);
@@ -368,49 +412,9 @@ namespace Raqeb.BL.Repositories
                 _uow.DbContext.ChangeTracker.Clear();
             }
 
+            // 📤 6️⃣ رجّع عدد السجلات المدخلة
             return transitionCells.Count + rowStats.Count;
         }
-
-
-
-
-
-
-        //private async Task BulkInsertLargeDataAsync(List<Customer> customers, BulkConfig config)
-        //{
-        //    int batchSize = 5000; // 🔹 يمكنك تعديلها حسب حجم السيرفر والذاكرة
-
-        //    // 🧩 تقسيم العملاء إلى دفعات صغيرة
-        //    var newCustomers = customers
-        //        .Where(c => c.ID == 0 || string.IsNullOrWhiteSpace(c.Code))
-        //        .ToList();
-
-        //    if (newCustomers.Any())
-        //    {
-        //        foreach (var batch in newCustomers.Chunk(batchSize))
-        //        {
-        //            await _uow.DbContext.BulkInsertAsync(batch.ToList(), config);
-        //            _uow.DbContext.ChangeTracker.Clear(); // تنظيف التتبع لتقليل الذاكرة
-        //        }
-        //    }
-
-        //    // 🧮 إدخال الدرجات لكل العملاء
-        //    var allGrades = customers
-        //        .SelectMany(c => c.Grades ?? Enumerable.Empty<CustomerGrade>())
-        //        .ToList();
-
-        //    if (allGrades.Any())
-        //    {
-        //        foreach (var batch in allGrades.Chunk(batchSize))
-        //        {
-        //            await _uow.DbContext.BulkInsertAsync(batch.ToList(), config);
-        //            _uow.DbContext.ChangeTracker.Clear();
-        //        }
-        //    }
-        //}
-
-
-
 
         private async Task<string> SaveTemporaryFileAsync(IFormFile file)
         {
@@ -525,84 +529,15 @@ namespace Raqeb.BL.Repositories
             return existingCustomers;
         }
 
-        /// <summary>
-        /// 🔹 حساب Yearly Average Transition Matrix من مجموعة المصفوفات الشهرية.
-        /// </summary>
-        /// <param name="monthlyMatrices">قائمة تحتوي على مصفوفة الانتقال لكل شهر (List of 2D matrices)</param>
-        /// <param name="monthsPerYear">عدد الأشهر في السنة، الافتراضي 12</param>
-        /// <returns>مصفوفة تمثل المتوسط السنوي لكل انتقال (from → to)</returns>
-        public ApiResponse<List<List<double>>> CalculateYearlyAverageTransitionMatrixFromMemory(
-            List<List<List<double>>> monthlyMatrices,
-            int monthsPerYear = 12)
-        {
-            try
-            {
-                // ✅ تحقق من وجود بيانات
-                if (monthlyMatrices == null || !monthlyMatrices.Any())
-                    return ApiResponse<List<List<double>>>.FailResponse("⚠️ No monthly transition matrices provided.");
-
-                // 🔹 عدد الحالات (Grades)
-                int states = monthlyMatrices.First().Count;
-                int cols = monthlyMatrices.First().First().Count;
-
-                // 🧮 إنشاء مصفوفة تجميع (للجمع الكلي عبر الأشهر)
-                var sumMatrix = new double[states, cols];
-                int monthCount = monthlyMatrices.Count;
-
-                // 🔁 جمع كل القيم من كل مصفوفة شهرية
-                foreach (var monthlyMatrix in monthlyMatrices)
-                {
-                    for (int i = 0; i < states; i++)
-                    {
-                        for (int j = 0; j < cols; j++)
-                        {
-                            sumMatrix[i, j] += monthlyMatrix[i][j];
-                        }
-                    }
-                }
-
-                // 🔹 حساب المتوسط السنوي (القسمة على عدد الأشهر)
-                var yearlyAvg = new List<List<double>>();
-                for (int i = 0; i < states; i++)
-                {
-                    var row = new List<double>();
-                    for (int j = 0; j < cols; j++)
-                    {
-                        double avgValue = sumMatrix[i, j] / monthCount;
-                        row.Add(Math.Round(avgValue, 10)); // تقريب 6 خانات عشرية
-                    }
-                    yearlyAvg.Add(row);
-                }
-
-                return ApiResponse<List<List<double>>>.SuccessResponse(
-                    "✅ Yearly Average Transition Matrix calculated successfully.",
-                    yearlyAvg
-                );
-            }
-            catch (Exception ex)
-            {
-                return ApiResponse<List<List<double>>>.FailResponse($"⚠️ Error while calculating Yearly Average Matrix: {ex.Message}");
-            }
-        }
-
-
-
-
-
-
         private async Task SaveCalculatedMatricesAsync(
-            Pool pool,
-            int version,
-            ApiResponse<List<List<double>>> transition,
-            ApiResponse<List<List<double>>> average,
-            ApiResponse<List<List<double>>> longRun,
-            ApiResponse<double> odr,
-            BulkConfig config,
-            ApiResponse<List<List<double>>> yearlyAverage = null, // 👈 مضاف
-            int? year = null) // 👈 السنة لو موجودة
+          Pool pool,
+          int version,
+          ApiResponse<List<List<double>>> transition,
+          BulkConfig config,
+          int? year = null)
         {
             // ============================================
-            // 1️⃣ حفظ Transition Matrix
+            // 1️⃣ تقسيم البيانات إلى دفعات صغيرة
             // ============================================
             var pdMatrixCells = new List<PDMatrixCell>();
             int stateCount = transition.Data.Count - 1;
@@ -624,139 +559,46 @@ namespace Raqeb.BL.Repositories
                     });
                 }
             }
-            await _uow.DbContext.BulkInsertAsync(pdMatrixCells, config);
-            _uow.DbContext.ChangeTracker.Clear();
+
+            if (!pdMatrixCells.Any())
+                return;
 
             // ============================================
-            // 2️⃣ حفظ Average / LongRun / ODR كالمعتاد
+            // 2️⃣ تقسيم الإدخال على دفعات Bulk أصغر
             // ============================================
-            var averageCells = new List<PDAverageCell>();
-            for (int i = 0; i < average.Data.Count; i++)
-                for (int j = 0; j < average.Data[i].Count; j++)
-                    averageCells.Add(new PDAverageCell
-                    {
-                        PoolId = pool.Id,
-                        PoolName = pool.Name,
-                        Version = version,
-                        RowIndex = i,
-                        ColumnIndex = j,
-                        Value = Math.Round(average.Data[i][j], 10),
-                        CreatedAt = DateTime.UtcNow
-                    });
-            await _uow.DbContext.BulkInsertAsync(averageCells, config);
-            _uow.DbContext.ChangeTracker.Clear();
+            const int batchSize = 50_000; // 👈 يمكنك تقليلها إذا ما زال هناك Timeout
+            int totalCount = pdMatrixCells.Count;
+            int totalBatches = (int)Math.Ceiling(totalCount / (double)batchSize);
 
-            var longRunCells = new List<PDLongRunCell>();
-            for (int i = 0; i < longRun.Data.Count; i++)
-                for (int j = 0; j < longRun.Data[i].Count; j++)
-                    longRunCells.Add(new PDLongRunCell
-                    {
-                        PoolId = pool.Id,
-                        PoolName = pool.Name,
-                        Version = version,
-                        RowIndex = i,
-                        ColumnIndex = j,
-                        Value = Math.Round(longRun.Data[i][j], 10),
-                        CreatedAt = DateTime.UtcNow
-                    });
-            await _uow.DbContext.BulkInsertAsync(longRunCells, config);
-            _uow.DbContext.ChangeTracker.Clear();
-
-            var odrCells = new List<PDObservedRate>
+            for (int batch = 0; batch < totalBatches; batch++)
             {
-                new PDObservedRate
+                var chunk = pdMatrixCells
+                    .Skip(batch * batchSize)
+                    .Take(batchSize)
+                    .ToList();
+
+                try
                 {
-                    PoolId = pool.Id,
-                    PoolName = pool.Name,
-                    Version = version,
-                    ObservedDefaultRate = odr.Data,
-                    CreatedAt = DateTime.UtcNow
-                }
-            };
-
-            await _uow.DbContext.BulkInsertAsync(odrCells, config);
-            _uow.DbContext.ChangeTracker.Clear();
-
-            // ============================================
-            // 3️⃣ حفظ Yearly Average Transition Matrix
-            // ============================================
-            if (yearlyAverage != null && yearlyAverage.Data != null && yearlyAverage.Data.Any())
-            {
-                var yearlyCells = new List<PDYearlyAverageCell>();
-
-                for (int i = 0; i < yearlyAverage.Data.Count; i++)
-                {
-                    for (int j = 0; j < yearlyAverage.Data[i].Count; j++)
+                    // ⚙️ إعداد bulk config مستقل لكل دفعة
+                    var bulkConfig = new BulkConfig
                     {
-                        yearlyCells.Add(new PDYearlyAverageCell
-                        {
-                            PoolId = pool.Id,
-                            PoolName = pool.Name,
-                            Version = version,
-                            Year = year ?? DateTime.UtcNow.Year, // 👈 السنة
-                            RowIndex = i,
-                            ColumnIndex = j,
-                            Value = Math.Round(yearlyAverage.Data[i][j], 10),
-                            CreatedAt = DateTime.UtcNow
-                        });
-                    }
-                }
+                        BatchSize = batchSize,
+                        UseTempDB = true, // يحسن الأداء ويمنع قفل الجدول
+                        BulkCopyTimeout = 0, // لا يوجد Timeout هنا
+                        PreserveInsertOrder = true
+                    };
 
-                await _uow.DbContext.BulkInsertAsync(yearlyCells, config);
-                _uow.DbContext.ChangeTracker.Clear();
+                    await _uow.DbContext.BulkInsertAsync(chunk, bulkConfig);
+                    _uow.DbContext.ChangeTracker.Clear();
+
+                    Console.WriteLine($"✅ Saved batch {batch + 1}/{totalBatches} ({chunk.Count} records)");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"❌ Batch {batch + 1} failed: {ex.Message}");
+                }
             }
         }
-
-
-
-
-
-        private async Task<string> ExportResultsToExcelAsync(Pool pool, int version,
-                    ApiResponse<List<List<double>>> transition,
-                    ApiResponse<List<List<double>>> average,
-                    ApiResponse<List<List<double>>> longRun,
-                    ApiResponse<double> odr)
-        {
-            string exportDir = Path.Combine(Directory.GetCurrentDirectory(), "PDExports");
-            string filePath = Path.Combine(exportDir, $"PD_Result_{pool.Name}_V{version}_{DateTime.Now:yyyy-MM-dd_HH-mm}.xlsx");
-
-            using var package = new ExcelPackage();
-            AddSheet(package, "Transition Matrix", transition.Data);
-            AddSheet(package, "Average Matrix", average.Data);
-            AddSheet(package, "Long Run Matrix", longRun.Data);
-
-            var wsODR = package.Workbook.Worksheets.Add("Observed Default Rate");
-            wsODR.Cells[1, 1].Value = "Observed Default Rate";
-            wsODR.Cells[1, 2].Value = odr.Data;
-
-            await package.SaveAsAsync(new FileInfo(filePath));
-            return filePath;
-        }
-
-        private void AddSheet(ExcelPackage package, string name, List<List<double>> data)
-        {
-            var ws = package.Workbook.Worksheets.Add(name);
-            for (int i = 0; i < data.Count; i++)
-                for (int j = 0; j < data[i].Count; j++)
-                    ws.Cells[i + 1, j + 1].Value = data[i][j];
-        }
-
-
-
-
-
-        // ✅ (سأكمل الجزء الثاني بعد هذا — تنفيذ BulkInsert + إنشاء Excel + Commit Transaction)
-
-
-        /*
-        //////////////////////////////////////////////////////////////////////////////////
-         */
-
-
-
-        // ============================================================
-        // 🟢 1. حساب Transition Matrix وتخزينها في قاعدة البيانات
-        // ============================================================
 
         public ApiResponse<List<List<double>>> CalculateTransitionMatrixFromMemory(Pool pool, List<Customer> customers)
         {
@@ -850,314 +692,6 @@ namespace Raqeb.BL.Repositories
                 return ApiResponse<List<List<double>>>.FailResponse($"⚠️ Error while calculating in memory: {ex.Message}");
             }
         }
-
-
-
-        //public async Task<ApiResponse<List<List<double>>>> CalculateTransitionMatrixAsync(int poolId)
-        //{
-        //    try
-        //    {
-        //        // ✅ تحميل الـ Pool المطلوب من قاعدة البيانات مع العملاء والدرجات الخاصة بكل عميل
-        //        var pool = await _uow.DbContext.Pools
-        //            .Include(p => p.Customers)
-        //                .ThenInclude(c => c.Grades)
-        //            .FirstOrDefaultAsync(p => p.Id == poolId);
-
-        //        // ❌ التحقق من وجود الـ Pool فعلاً
-        //        if (pool == null)
-        //            return ApiResponse<List<List<double>>>.FailResponse("❌ لم يتم العثور على Pool.");
-
-        //        // ✅ استخراج العملاء من الـ Pool وتحويلهم إلى List في الذاكرة
-        //        var customers = pool.Customers.ToList();
-
-        //        // ❌ في حال عدم وجود عملاء داخل الـ Pool
-        //        if (customers.Count == 0)
-        //            return ApiResponse<List<List<double>>>.FailResponse("⚠️ لا يوجد عملاء داخل هذا الـ Pool.");
-
-        //        // ✅ عدد الحالات (Grades) — يمكن تعديلها لاحقًا ديناميكيًا
-        //        int states = 4;
-
-        //        // ✅ مصفوفة لتخزين عدد الانتقالات من كل درجة إلى الأخرى
-        //        var matrix = new double[states, states];
-
-        //        // ✅ مصفوفة لتخزين عدد العملاء الذين بدأوا في كل درجة (Total per row)
-        //        var totalPerRow = new double[states];
-
-        //        // ✅ تمرّ على كل عميل لحساب الانتقالات
-        //        foreach (var customer in customers)
-        //        {
-        //            // 🔹 التأكد من وجود درجات للعميل
-        //            if (customer.Grades == null || customer.Grades.Count < 2)
-        //                continue;
-
-        //            // 🔹 ترتيب الدرجات حسب التاريخ تصاعديًا (زمنيًا)
-        //            var sortedGrades = customer.Grades.OrderBy(g => g.Month).ToList();
-
-        //            // 🔁 المرور على كل انتقال من شهر لآخر
-        //            for (int i = 0; i < sortedGrades.Count - 1; i++)
-        //            {
-        //                // 🔹 درجة البداية (From Grade)
-        //                int from = sortedGrades[i].GradeValue - 1;
-
-        //                // 🔹 درجة النهاية (To Grade)
-        //                int to = sortedGrades[i + 1].GradeValue - 1;
-
-        //                // 🔹 زيادة العداد للانتقال المحدد
-        //                matrix[from, to]++;
-
-        //                // 🔹 زيادة إجمالي عدد العملاء الذين بدأوا من الدرجة الحالية
-        //                totalPerRow[from]++;
-        //            }
-
-        //        }
-
-        //        // ✅ تجهيز المصفوفة النهائية لنتيجة الإخراج
-        //        var result = new List<List<double>>();
-
-        //        // ✅ تمرّ على كل صف (درجة) في المصفوفة لحساب النسب و PD
-        //        for (int i = 0; i < states; i++)
-        //        {
-        //            // 🔹 إنشاء صف جديد
-        //            var row = new List<double>();
-
-        //            // 🔹 جمع إجمالي الصف لحساب المجموع والنسب
-        //            double total = totalPerRow[i] == 0 ? 1 : totalPerRow[i];
-
-        //            // 🔹 المرور على كل عمود (To Grade)
-        //            for (int j = 0; j < states; j++)
-        //            {
-        //                // 🔹 حساب النسبة الانتقالية (الاحتمالية)
-        //                double probability = matrix[i, j] / total;
-
-        //                // 🔹 تقريب القيمة لأربعة منازل عشرية
-        //                row.Add(Math.Round(probability, 4));
-        //            }
-
-        //            // 🔹 حساب الـ Total (إجمالي العملاء في هذا الصف)
-        //            double totalCount = totalPerRow[i];
-
-        //            // 🔹 حساب الـ PD (احتمالية الانتقال إلى Default)
-        //            double pd = totalCount == 0 ? 0 : (matrix[i, states - 1] / totalCount);
-
-        //            // 🔹 إضافة الـ Total و الـ PD كأعمدة إضافية في الصف
-        //            row.Add(totalCount);
-        //            row.Add(Math.Round(pd * 100, 2)); // النسبة المئوية %
-
-        //            // 🔹 إضافة الصف إلى النتيجة النهائية
-        //            result.Add(row);
-        //        }
-
-        //        // ✅ تجهيز صف الإجمالي (Total Row)
-        //        var totalRow = new List<double>();
-        //        for (int j = 0; j < states; j++)
-        //        {
-        //            // 🔹 جمع كل القيم في نفس العمود عبر جميع الصفوف
-        //            double colSum = 0;
-        //            for (int i = 0; i < states; i++)
-        //                colSum += matrix[i, j];
-
-        //            totalRow.Add(colSum);
-        //        }
-
-        //        // 🔹 جمع إجمالي الصفوف لعمل المجموع الكلي
-        //        double grandTotal = totalRow.Sum();
-
-        //        // 🔹 حساب الـ PD العام (مجموع Default ÷ المجموع العام)
-        //        double overallPD = grandTotal == 0 ? 0 : (totalRow.Last() / grandTotal);
-
-        //        // 🔹 إضافة الإجماليات في نهاية الجدول
-        //        totalRow.Add(grandTotal);
-        //        totalRow.Add(Math.Round(overallPD * 100, 2));
-
-        //        // 🔹 إضافة صف الإجمالي في نهاية النتيجة
-        //        result.Add(totalRow);
-
-        //        // ✅ إرجاع المصفوفة النهائية (مع Totals و PDs)
-        //        return ApiResponse<List<List<double>>>.SuccessResponse(
-        //            $"✅ تم حساب Transition Matrix بنجاح لعدد {customers.Count} عميل داخل Pool {pool.Name}",
-        //            result);
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        // ⚠️ في حال وجود أي خطأ أثناء العملية
-        //        return ApiResponse<List<List<double>>>.FailResponse($"⚠️ حدث خطأ أثناء حساب Transition Matrix: {ex.Message}");
-        //    }
-        //}
-
-
-        // ============================================================
-        // 🟢 2. حساب Average Transition Matrix
-        // ============================================================
-        public ApiResponse<List<List<double>>> CalculateAverageTransitionMatrixFromMemory(List<List<double>> transitionMatrix)
-        {
-            try
-            {
-                // 🔹 التحقق من وجود بيانات في المصفوفة
-                if (transitionMatrix == null || !transitionMatrix.Any())
-                    return ApiResponse<List<List<double>>>.FailResponse("⚠️ Transition Matrix is empty.");
-
-                // 🔹 حساب المصفوفة المتوسطة
-                var avg = CalculateAverageMatrix(transitionMatrix);
-
-                // ✅ إرجاع النتيجة النهائية
-                return ApiResponse<List<List<double>>>.SuccessResponse("✅ تم حساب Average Transition Matrix بنجاح", avg);
-            }
-            catch (Exception ex)
-            {
-                // ⚠️ في حال حدوث أي خطأ أثناء العملية
-                return ApiResponse<List<List<double>>>.FailResponse($"⚠️ خطأ أثناء حساب Average Transition Matrix: {ex.Message}");
-            }
-        }
-
-
-        // ============================================================
-        // 🟢 3. حساب Long Run Matrix (المصفوفة بعيدة المدى)
-        // ============================================================
-        public ApiResponse<List<List<double>>> CalculateLongRunMatrixFromMemory(List<List<double>> transitionMatrix)
-        {
-            try
-            {
-                // 🔹 التحقق من وجود مصفوفة الانتقال
-                if (transitionMatrix == null || !transitionMatrix.Any())
-                    return ApiResponse<List<List<double>>>.FailResponse("⚠️ Transition Matrix is empty.");
-
-                // 🔹 حساب مصفوفة المدى الطويل بالاعتماد على المصفوفة الحالية
-                var longRun = CalculateLongRunMatrix(transitionMatrix);
-
-                // ✅ إرجاع النتيجة
-                return ApiResponse<List<List<double>>>.SuccessResponse("✅ تم حساب Long Run Matrix بنجاح", longRun);
-            }
-            catch (Exception ex)
-            {
-                // ⚠️ في حال حدوث أي خطأ أثناء العملية
-                return ApiResponse<List<List<double>>>.FailResponse($"⚠️ خطأ أثناء حساب Long Run Matrix: {ex.Message}");
-            }
-        }
-
-
-        // ============================================================
-        // 🟢 4. حساب معدل التعثر الفعلي (Observed Default Rate)
-        // ============================================================
-        public ApiResponse<double> CalculateObservedDefaultRateFromMemory(List<List<double>> transitionMatrix)
-        {
-            try
-            {
-                // 🔹 التحقق من وجود المصفوفة
-                if (transitionMatrix == null || !transitionMatrix.Any())
-                    return ApiResponse<double>.FailResponse("⚠️ Transition Matrix is empty.");
-
-                // 🔹 حساب الـ ODR من المصفوفة
-                var odr = CalculateObservedDefaultRate(transitionMatrix);
-
-                // ✅ إرجاع النتيجة
-                return ApiResponse<double>.SuccessResponse("✅ تم حساب Observed Default Rate بنجاح", odr);
-            }
-            catch (Exception ex)
-            {
-                // ⚠️ في حال وجود خطأ أثناء الحساب
-                return ApiResponse<double>.FailResponse($"⚠️ خطأ أثناء حساب Observed Default Rate: {ex.Message}");
-            }
-        }
-
-
-        // ============================================================
-        // 🔸 دالة حساب المصفوفة المتوسطة
-        // ============================================================
-        private List<List<double>> CalculateAverageMatrix(List<List<double>> matrix)
-        {
-            // 🔹 إنشاء قائمة جديدة لحفظ النتائج
-            var avg = new List<List<double>>();
-
-            // 🔁 المرور على كل صف في المصفوفة
-            for (int i = 0; i < matrix.Count; i++)
-            {
-                // 🧮 جمع القيم في الصف الواحد
-                double sum = matrix[i].Sum();
-
-                // 🧩 قسمة كل قيمة على مجموع الصف للحصول على النسبة
-                var row = matrix[i].Select(x => x / (sum == 0 ? 1 : sum)).ToList();
-
-                avg.Add(row);
-            }
-
-            return avg;
-        }
-
-        // ============================================================
-        // 🔸 دالة حساب المصفوفة بعيدة المدى (Long Run)
-        // ============================================================
-        private List<List<double>> CalculateLongRunMatrix(List<List<double>> matrix)
-        {
-            // 🔹 نسخة من المصفوفة الأصلية
-            var result = matrix;
-
-            // 🔁 نضرب المصفوفة بنفسها 50 مرة للحصول على الاستقرار (Steady State)
-            for (int i = 0; i < 50; i++)
-                result = MultiplyMatrices(result, matrix);
-
-            return result;
-        }
-
-        // ============================================================
-        // 🔸 دالة ضرب مصفوفتين (Matrix Multiplication)
-        // ============================================================
-        private List<List<double>> MultiplyMatrices(List<List<double>> A, List<List<double>> B)
-        {
-            int n = A.Count; // عدد الصفوف والأعمدة (مصفوفة مربعة)
-            var result = new List<List<double>>(n);
-
-            for (int i = 0; i < n; i++)
-            {
-                var row = new List<double>(n);
-                for (int j = 0; j < n; j++)
-                {
-                    double sum = 0;
-
-                    for (int k = 0; k < n; k++)
-                        sum += A[i][k] * B[k][j];
-
-                    // ✅ حماية من NaN و Infinity + تقريب 10 منازل عشرية
-                    double safeValue = double.IsNaN(sum) || double.IsInfinity(sum)
-                        ? 0
-                        : Math.Round(sum, 15);
-
-                    row.Add(safeValue);
-                }
-
-                // ✅ تطبيع الصف (Normalization) لو المجموع مش صفر
-                double rowSum = row.Sum();
-                if (rowSum != 0)
-                {
-                    for (int j = 0; j < n; j++)
-                        row[j] = Math.Round(row[j] / rowSum, 15);
-                }
-
-                result.Add(row);
-            }
-
-            return result;
-        }
-
-
-
-        // ============================================================
-        // 🔸 دالة حساب معدل التعثر الفعلي (Observed Default Rate)
-        // ============================================================
-        private double CalculateObservedDefaultRate(List<List<double>> matrix)
-        {
-            int n = matrix.Count;
-
-            // 🔹 نجمع آخر عمود في كل صف (احتمالية التعثر)
-            double sum = matrix.Sum(r => r.Last());
-
-            // 🔹 المتوسط العام لمعدل التعثر
-            return Math.Round(sum / n, 10);
-        }
-
-
-
-
-
 
 
         public async Task<PagedResult<PDTransitionMatrixDto>> GetTransitionMatricesPagedAsync(PDMatrixFilterDto filter)
@@ -1391,34 +925,194 @@ namespace Raqeb.BL.Repositories
             return await package.GetAsByteArrayAsync();
         }
 
-        public async Task<List<TransitionMatrixDto>> CalculateYearlyAverageTransitionMatricesAsync(PDMatrixFilterDto filter)
+        private async Task BulkInsertYearlyAverageBatchAsync(List<PDYearlyAverageCell> data, int maxRetries = 3)
         {
-            var query = _uow.DbContext.PDMonthlyTransitionCells
-                .Where(c => c.PoolId == filter.PoolId && c.ColumnIndex >= 0);
+            if (data == null || !data.Any())
+                return;
+
+            int attempt = 0;
+            bool success = false;
+            Exception lastError = null;
+
+            while (!success && attempt < maxRetries)
+            {
+                attempt++;
+                try
+                {
+                    Console.WriteLine($"🔄 [BulkInsert] Attempt {attempt}/{maxRetries} - {data.Count} records");
+
+                    var bulkConfig = new BulkConfig
+                    {
+                        UseTempDB = true,
+                        PreserveInsertOrder = false,
+                        SetOutputIdentity = false,
+                        EnableStreaming = true,
+                        BatchSize = 50_000,
+                        BulkCopyTimeout = 0
+                    };
+
+                    await _uow.DbContext.BulkInsertAsync(data, bulkConfig);
+                    _uow.DbContext.ChangeTracker.Clear();
+
+                    Console.WriteLine($"✅ [BulkInsert] Batch inserted successfully on attempt {attempt}");
+                    success = true;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+
+                    string msg = ex.Message.ToLowerInvariant();
+                    bool transient =
+                        msg.Contains("timeout") ||
+                        msg.Contains("closed") ||
+                        msg.Contains("transport-level error") ||
+                        msg.Contains("connection") ||
+                        msg.Contains("deadlocked");
+
+                    if (transient)
+                    {
+                        Console.WriteLine($"⚠️ [BulkInsert] Transient error on attempt {attempt}: {ex.Message}");
+                        Console.WriteLine("⏳ Retrying in 5 seconds...");
+                        await Task.Delay(5000);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"❌ [BulkInsert] Fatal error: {ex.Message}");
+                        break;
+                    }
+                }
+            }
+
+            if (!success && lastError != null)
+            {
+                Console.WriteLine($"🚨 [BulkInsert] Failed after {maxRetries} retries. Last error: {lastError.Message}");
+                throw new Exception($"Bulk insert failed after {maxRetries} retries", lastError);
+            }
+        }
+
+
+        public async Task CalculateAllYearlyAverageTransitionMatricesAsync()
+        {
+            try
+            {
+                _uow.DbContext.Database.SetCommandTimeout(0);
+
+                // 🧱 تحميل كل الـ IDs لتقليل الذاكرة
+                var allIds = await _uow.DbContext.PDMonthlyTransitionCells
+                    .AsNoTracking()
+                    .Select(x => x.ID)
+                    .ToListAsync();
+
+                if (!allIds.Any())
+                    return;
+
+                const int chunkSize = 100_000;
+                var yearlyCellsBuffer = new List<PDYearlyAverageCell>();
+
+                for (int i = 0; i < allIds.Count; i += chunkSize)
+                {
+                    var chunkIds = allIds.Skip(i).Take(chunkSize).ToList();
+
+                    var chunkData = await _uow.DbContext.PDMonthlyTransitionCells
+                        .AsNoTracking()
+                        .Where(x => chunkIds.Contains(x.ID))
+                        .ToListAsync();
+
+                    // 🔁 تجميع حسب PoolId + Year
+                    foreach (var group in chunkData.GroupBy(c => new { c.PoolId, c.Year }))
+                    {
+                        int currentYear = group.Key.Year;
+                        var monthsInYear = group.Select(x => x.Month).Distinct().ToList();
+
+                        // ✅ لو السنة 2020 نحسب فقط يناير
+                        if (currentYear == 2020)
+                        {
+                            monthsInYear = monthsInYear.Where(m => m == 1).ToList();
+                        }
+
+                        // ⚙️ فلترة البيانات حسب الشهور المحددة
+                        var filteredGroup = group
+                            .Where(c => monthsInYear.Contains(c.Month))
+                            .ToList();
+
+                        // 📊 لو السنة 2020 → احسب المتوسط على شهر واحد فقط (يناير)
+                        int monthCount = currentYear == 2020 ? 1 : (monthsInYear.Count == 0 ? 1 : monthsInYear.Count);
+
+                        var grouped = filteredGroup
+                            .GroupBy(c => new { c.RowIndex, c.ColumnIndex })
+                            .ToDictionary(
+                                g => (g.Key.RowIndex, g.Key.ColumnIndex),
+                                g => Math.Round(g.Sum(x => x.Value) / monthCount, 4)
+                            );
+
+                        // 🧱 تجهيز البيانات للإدخال
+                        for (int from = 1; from <= 4; from++)
+                        {
+                            for (int to = 1; to <= 4; to++)
+                            {
+                                double value = grouped.TryGetValue((from - 1, to - 1), out double v) ? v : 0;
+                                yearlyCellsBuffer.Add(new PDYearlyAverageCell
+                                {
+                                    PoolId = group.Key.PoolId,
+                                    Year = currentYear,
+                                    RowIndex = from - 1,
+                                    ColumnIndex = to - 1,
+                                    Value = value,
+                                    CreatedAt = DateTime.UtcNow
+                                });
+                            }
+                        }
+                    }
+
+                    if (yearlyCellsBuffer.Any())
+                    {
+                        await BulkInsertYearlyAverageBatchAsync(yearlyCellsBuffer, maxRetries: 3);
+                        yearlyCellsBuffer.Clear();
+                    }
+
+                    Console.WriteLine($"✅ Processed chunk {i / chunkSize + 1} / {Math.Ceiling(allIds.Count / (double)chunkSize)}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error: {ex.Message}");
+            }
+        }
+
+        public async Task<List<TransitionMatrixDto>> GetYearlyAverageTransitionMatricesAsync(PDMatrixFilterDto filter)
+        {
+            var query = _uow.DbContext.PDYearlyAverageCells.AsQueryable();
+            var rrr = query.ToList();
+            //if (filter.PoolId > 0)
+            //    query = query.Where(c => c.PoolId == filter.PoolId);
 
             if (filter.Year.HasValue)
                 query = query.Where(c => c.Year == filter.Year.Value);
 
-            var allCells = await query.ToListAsync();
-            if (!allCells.Any())
+            var data = await query.ToListAsync();
+            if (!data.Any())
                 return new List<TransitionMatrixDto>();
 
-            // 🧮 نجمع حسب السنة (لو الفلتر فيه سنة واحدة هتبقى مجموعة واحدة)
+            var distinctYears = data.Select(d => d.Year).Distinct().OrderBy(y => y).ToList();
             var result = new List<TransitionMatrixDto>();
 
-            foreach (var yearGroup in allCells.GroupBy(c => c.Year))
+            foreach (var year in distinctYears)
             {
-                // بناء قاموس (from,to) => المتوسط
-                var grouped = yearGroup
+                var yearData = data.Where(c => c.Year == year).ToList();
+                if (!yearData.Any())
+                    continue;
+
+                // 🧮 حساب المتوسط بطريقة ديناميكية بناءً على عدد السجلات الفعلية
+                // (حتى لو كانت السنة تحتوي على شهر واحد فقط مثل 2021)
+                var grouped = yearData
                     .GroupBy(c => new { c.RowIndex, c.ColumnIndex })
                     .ToDictionary(
                         g => (g.Key.RowIndex, g.Key.ColumnIndex),
-                        g => Math.Round(g.Average(x => x.Value), 2)
+                        g => Math.Round(g.Average(x => x.Value), 6)
                     );
 
+                // 🧱 بناء مصفوفة كاملة 4×4
                 var avgCells = new List<TransitionCellDto>();
-
-                // ✅ بناء مصفوفة 4×4 حتى لو مفيش بيانات
                 for (int from = 1; from <= 4; from++)
                 {
                     for (int to = 1; to <= 4; to++)
@@ -1433,18 +1127,19 @@ namespace Raqeb.BL.Repositories
                     }
                 }
 
-                // 📊 حساب الإجماليات و PD لكل صف
+                // 📊 حساب Totals و PD لكل صف
                 var rowStats = avgCells
                     .GroupBy(x => x.FromGrade)
                     .Select(g =>
                     {
                         var total = g.Sum(x => x.Count);
                         var pd = g.FirstOrDefault(x => x.ToGrade == 4)?.Count ?? 0;
-                        var pdPercent = total > 0 ? Math.Round((pd / total) * 100, 1) : 0;
+                        var pdPercent = total > 0 ? Math.Round((pd / total) * 100, 4) : 0;
+
                         return new RowStatDto
                         {
                             FromGrade = g.Key,
-                            TotalCount = (int)total,
+                            TotalCount = (int)Math.Round(total),
                             PDPercent = pdPercent
                         };
                     })
@@ -1452,28 +1147,26 @@ namespace Raqeb.BL.Repositories
 
                 result.Add(new TransitionMatrixDto
                 {
-                    Year = yearGroup.Key,
-                    Title = $"Yearly Average Transition Matrix - {yearGroup.Key}",
+                    Year = year,
+                    Title = $"Yearly Average Transition Matrix - {year}",
                     IsYearlyAverage = true,
                     Cells = avgCells,
                     RowStats = rowStats
                 });
             }
 
-            return result;
+            return result.OrderBy(r => r.Year).ToList();
         }
-
 
         public async Task<byte[]> ExportYearlyAverageToExcelAsync(PDMatrixFilterDto filter)
         {
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
 
             // 🧩 استدعاء المصفوفات السنوية المحسوبة
-            List<TransitionMatrixDto> matrices = await CalculateYearlyAverageTransitionMatricesAsync(filter);
+            List<TransitionMatrixDto> matrices = await GetYearlyAverageTransitionMatricesAsync(filter);
 
             if (matrices == null || matrices.Count == 0)
                 return Array.Empty<byte>();
-
 
             using var package = new ExcelPackage();
 
@@ -1487,99 +1180,148 @@ namespace Raqeb.BL.Repositories
 
                 // 🏷️ العنوان الرئيسي
                 ws.Cells[startRow, 1].Value = matrix.Title;
-                ws.Cells[startRow, 1, startRow, 6].Merge = true;
+                ws.Cells[startRow, 1, startRow, 7].Merge = true;
                 ws.Cells[startRow, 1].Style.Font.Bold = true;
                 ws.Cells[startRow, 1].Style.Font.Size = 14;
-                ws.Cells[startRow, 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
                 ws.Cells[startRow, 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
-                ws.Cells[startRow, 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.DarkBlue);
+                ws.Cells[startRow, 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(0, 32, 96)); // Dark Blue
                 ws.Cells[startRow, 1].Style.Font.Color.SetColor(System.Drawing.Color.White);
-
+                ws.Cells[startRow, 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
                 startRow += 2;
 
-                // 🧱 عناوين الأعمدة
-                string[] headers = { "FromGrade", "ToGrade", "Count", "Total", "PD%" };
+                // 🧱 رؤوس الأعمدة
+                string[] headers = { "From / To", "Grade 1", "Grade 2", "Grade 3", "Grade 4", "Total", "PD %" };
                 for (int i = 0; i < headers.Length; i++)
                 {
                     ws.Cells[startRow, i + 1].Value = headers[i];
                     ws.Cells[startRow, i + 1].Style.Font.Bold = true;
-                    ws.Cells[startRow, i + 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
-                    ws.Cells[startRow, i + 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.LightGray);
                     ws.Cells[startRow, i + 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+                    ws.Cells[startRow, i + 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    ws.Cells[startRow, i + 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(0, 32, 96)); // navy blue
+                    ws.Cells[startRow, i + 1].Style.Font.Color.SetColor(System.Drawing.Color.White);
                 }
 
-                int row = startRow;
+                int currentRow = startRow;
 
-                // 📊 تعبئة بيانات الخلايا
-                foreach (var cell in matrix.Cells.OrderBy(x => x.FromGrade).ThenBy(x => x.ToGrade))
+                // 🧮 عرض الصفوف (Grades)
+                for (int from = 1; from <= 4; from++)
                 {
-                    row++;
-                    ws.Cells[row, 1].Value = cell.FromGrade;
-                    ws.Cells[row, 2].Value = cell.ToGrade;
-                    ws.Cells[row, 3].Value = cell.Count;
+                    currentRow++;
+                    ws.Cells[currentRow, 1].Value = $"Grade {from}";
+                    ws.Cells[currentRow, 1].Style.Font.Bold = true;
+                    ws.Cells[currentRow, 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    ws.Cells[currentRow, 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(221, 235, 247)); // Light Blue
+
+                    double total = 0;
+
+                    // الأعمدة (To Grades)
+                    for (int to = 1; to <= 4; to++)
+                    {
+                        var cell = matrix.Cells.FirstOrDefault(c => c.FromGrade == from && c.ToGrade == to);
+                        double value = cell?.Count ?? 0;
+
+                        ws.Cells[currentRow, to + 1].Value = value;
+                        ws.Cells[currentRow, to + 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+
+                        // تظليل تدريجي خفيف حسب العمود
+                        if (value > 0)
+                        {
+                            ws.Cells[currentRow, to + 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                            ws.Cells[currentRow, to + 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(189, 215, 238)); // soft blue
+                        }
+
+                        total += value;
+                    }
+
+                    // الإجمالي (Total)
+                    ws.Cells[currentRow, 6].Value = total;
+                    ws.Cells[currentRow, 6].Style.Font.Bold = true;
+                    ws.Cells[currentRow, 6].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                    ws.Cells[currentRow, 6].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(221, 235, 247));
+
+                    // PD %
+                    var rowStat = matrix.RowStats.FirstOrDefault(x => x.FromGrade == from);
+                    double pd = rowStat?.PDPercent ?? 0;
+                    ws.Cells[currentRow, 7].Value = pd / 100;
+                    ws.Cells[currentRow, 7].Style.Numberformat.Format = "0.00%";
+                    ws.Cells[currentRow, 7].Style.Font.Bold = true;
+                    ws.Cells[currentRow, 7].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+
+                    // لون العمود حسب القيمة
+                    if (pd >= 100)
+                    {
+                        ws.Cells[currentRow, 7].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(255, 199, 206)); // red shade
+                        ws.Cells[currentRow, 7].Style.Font.Color.SetColor(System.Drawing.Color.Red);
+                    }
+                    else
+                    {
+                        ws.Cells[currentRow, 7].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(198, 239, 206)); // green shade
+                        ws.Cells[currentRow, 7].Style.Font.Color.SetColor(System.Drawing.Color.DarkGreen);
+                    }
                 }
 
-                // 📈 حساب الإجماليات (Totals + PD)
-                row++;
-                ws.Cells[row, 1].Value = "Totals";
-                ws.Cells[row, 1].Style.Font.Bold = true;
-
-                foreach (var stat in matrix.RowStats.OrderBy(s => s.FromGrade))
+                // ✅ الحدود العامة
+                using (var range = ws.Cells[startRow, 1, currentRow, 7])
                 {
-                    row++;
-                    ws.Cells[row, 1].Value = stat.FromGrade;
-                    ws.Cells[row, 4].Value = stat.TotalCount;
-                    ws.Cells[row, 5].Value = stat.PDPercent / 100; // تحويل النسبة إلى نسبة مئوية في Excel
-                    ws.Cells[row, 5].Style.Numberformat.Format = "0.0%";
-
-                    // لون العمود الأحمر لـ PD
-                    ws.Cells[row, 5].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
-                    ws.Cells[row, 5].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.DarkRed);
-                    ws.Cells[row, 5].Style.Font.Color.SetColor(System.Drawing.Color.White);
+                    range.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                    range.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                    range.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                    range.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
                 }
 
-                // 🎨 تنسيق الجدول
+                // 🎨 تنسيق عام
                 ws.Cells.AutoFitColumns();
                 ws.View.ShowGridLines = false;
-                ws.Cells.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
                 ws.Cells.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+                ws.Cells.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
             }
 
-            // 💾 تحويل الملف إلى bytes
             return await package.GetAsByteArrayAsync();
         }
 
         public async Task<TransitionMatrixDto> CalculateLongRunAverageTransitionMatrixAsync()
         {
-            // 🧱 اجلب كل البيانات الموجودة في الجدول (كل Pools وكل السنوات)
-            var allCells = await _uow.DbContext.PDMonthlyTransitionCells.ToListAsync();
+            // 🧱 1. اجلب كل البيانات السنوية المخزّنة في الجدول
+            var allYearly = await _uow.DbContext.PDYearlyAverageCells.ToListAsync();
 
-            if (!allCells.Any())
+            if (!allYearly.Any())
                 return null;
 
-            // 🧮 تجميع المتوسط لجميع البيانات (بدون أي شروط)
-            var grouped = allCells
+            // 🧮 2. احسب عدد السنوات الفعلية المميزة
+            var distinctYears = allYearly.Select(x => x.Year).Distinct().Count();
+
+            if (distinctYears == 0)
+                distinctYears = 1; // حماية من القسمة على صفر
+
+            // 🧮 3. حساب المتوسط العام لكل خلية (من → إلى) عبر كل السنوات
+            var grouped = allYearly
                 .GroupBy(c => new { c.RowIndex, c.ColumnIndex })
                 .Select(g => new
                 {
                     From = g.Key.RowIndex + 1,
-                    To = g.Key.ColumnIndex,
-                    AvgValue = Math.Round(g.Average(x => x.Value), 4)
+                    To = g.Key.ColumnIndex + 1,
+                    // ✅ نحسب مجموع القيم ونقسم على عدد السنوات فقط
+                    AvgValue = Math.Round(g.Sum(x => x.Value) / 6, 4)
                 })
                 .ToList();
 
-            // ✅ بناء المصفوفة 4×4 (حتى لو بعض الخلايا فاضية)
-            var avgCells = grouped
-                .Where(g => g.To >= 0)
-                .Select(g => new TransitionCellDto
+            // ✅ 4. بناء مصفوفة 4×4 كاملة حتى لو بعض القيم مفقودة
+            var avgCells = new List<TransitionCellDto>();
+            for (int from = 1; from <= 4; from++)
+            {
+                for (int to = 1; to <= 4; to++)
                 {
-                    FromGrade = g.From,
-                    ToGrade = g.To + 1,
-                    Count = g.AvgValue
-                })
-                .ToList();
+                    double value = grouped.FirstOrDefault(g => g.From == from && g.To == to)?.AvgValue ?? 0;
+                    avgCells.Add(new TransitionCellDto
+                    {
+                        FromGrade = from,
+                        ToGrade = to,
+                        Count = value
+                    });
+                }
+            }
 
-            // 📊 حساب الإجماليات و PD%
+            // 📊 5. نحسب Totals و PD%
             var rowStats = avgCells
                 .GroupBy(x => x.FromGrade)
                 .Select(g =>
@@ -1587,18 +1329,20 @@ namespace Raqeb.BL.Repositories
                     var total = g.Sum(x => x.Count);
                     var pd = g.FirstOrDefault(x => x.ToGrade == 4)?.Count ?? 0;
                     var pdPercent = total > 0 ? Math.Round((pd / total) * 100, 2) : 0;
+
                     return new RowStatDto
                     {
                         FromGrade = g.Key,
-                        TotalCount = (int)total,
+                        TotalCount = (int)Math.Round(total),
                         PDPercent = pdPercent
                     };
                 })
                 .ToList();
 
+            // 🎯 6. نرجع النتيجة النهائية
             return new TransitionMatrixDto
             {
-                Title = "Global Long Run Average Transition Matrix (All Pools, All Years)",
+                Title = $"Long Run Average Transition Matrix (Based on {distinctYears} Years)",
                 Year = 0,
                 IsYearlyAverage = false,
                 Cells = avgCells,

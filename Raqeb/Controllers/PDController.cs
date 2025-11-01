@@ -110,7 +110,7 @@ namespace Raqeb.API.Controllers
         [HttpPost("yearly-averages")]
         public async Task<ActionResult<Task<List<TransitionMatrixDto>>>> GetYearlyAverages([FromBody] PDMatrixFilterDto filter)
         {
-            var result = await _repo.CalculateYearlyAverageTransitionMatricesAsync(filter);
+            var result = await _repo.GetYearlyAverageTransitionMatricesAsync(filter);
             return Ok(result);
         }
 

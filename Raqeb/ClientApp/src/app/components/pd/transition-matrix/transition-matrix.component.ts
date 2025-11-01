@@ -51,7 +51,7 @@ export class TransitionMatrixComponent implements OnInit {
   ngOnInit() {
     // Generate years from 2015 to current year
     const currentYear = new Date().getFullYear();
-    for (let year = 2015; year <= currentYear; year++) {
+    for (let year = 2015; year <= 2021; year++) {
       this.years.push(year);
     }
     this.loadData();
