@@ -86,7 +86,7 @@ export class ODRComponent implements OnInit {
 
   // Helper method to format percentage
   formatPercentage(value: number): string {
-    return (value * 100).toFixed(2) + '%';
+    return (value ).toFixed(4) + '%';
   }
 
   // Check if rate is considered high risk
