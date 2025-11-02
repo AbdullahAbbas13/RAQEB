@@ -1,18 +1,20 @@
-﻿namespace Raqeb.Shared.Models
-{
+﻿using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Raqeb.Shared.Models
+{
+    public class PDObservedRate
     {
-        public class PDObservedRate
-        {
-            [Key]
-            public int Id { get; set; }
-            public int PoolId { get; set; }
-            [MaxLength(200)] public string PoolName { get; set; }
-            public int Version { get; set; }
-            public double ObservedDefaultRate { get; set; }
-            public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        }
-    }
+        [Key]
+        public int Id { get; set; }
 
+        public int PoolId { get; set; }
+
+        public int Year { get; set; }
+
+        public double ObservedDefaultRate { get; set; }
+
+        public DateTime CreatedAt { get; set; }
+    }
 }

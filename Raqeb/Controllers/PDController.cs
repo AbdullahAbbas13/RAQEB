@@ -22,7 +22,7 @@ namespace Raqeb.API.Controllers
         [HttpPost("import")]
         [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status400BadRequest)]
-        public async Task<IActionResult> ImportPDExcel( IFormFile file)
+        public async Task<IActionResult> ImportPDExcel(IFormFile file)
         {
             // ✅ التحقق من أن الملف تم رفعه بشكل صحيح
             if (file == null || file.Length == 0)
@@ -77,7 +77,7 @@ namespace Raqeb.API.Controllers
         }
 
         [HttpPost("transition-matrices")]
-        public async Task<ActionResult< PagedResult<PDTransitionMatrixDto>>> GetMatrices([FromBody] PDMatrixFilterDto filter)
+        public async Task<ActionResult<PagedResult<PDTransitionMatrixDto>>> GetMatrices([FromBody] PDMatrixFilterDto filter)
         {
             var data = await _repo.GetTransitionMatricesPagedAsync(filter);
             return Ok(data);
@@ -159,6 +159,53 @@ namespace Raqeb.API.Controllers
             var fileName = $"LongRunMatrix_{DateTime.UtcNow:yyyyMMdd}.xlsx";
             return File(fileBytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
         }
+
+
+
+        // ============================================================
+        // 🟢 API Endpoint: عرض كل Observed Default Rates
+        // ============================================================
+        [HttpGet("observed-default-rates")]
+        [ProducesResponseType(typeof(ApiResponse<List<PDObservedRateDto>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> GetObservedDefaultRates()
+        {
+            var result = await _repo.GetObservedDefaultRatesAsync();
+
+            if (result.Success)
+                return Ok(result);
+
+            return BadRequest(result);
+        }
+
+
+        // ============================================================
+        // 🟢 API Endpoint: تصدير Observed Default Rates إلى Excel
+        // ============================================================
+        [HttpGet("observed-default-rates/export")]
+        public async Task<IActionResult> ExportObservedDefaultRatesToExcel()
+        {
+            try
+            {
+                var fileBytes = await _repo.ExportObservedDefaultRatesToExcelAsync();
+
+                if (fileBytes == null || fileBytes.Length == 0)
+                    return BadRequest("⚠️ No Observed Default Rates data found.");
+
+                var fileName = $"ObservedDefaultRates_{DateTime.UtcNow:yyyyMMdd}.xlsx";
+                return File(fileBytes,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    fileName);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest($"❌ Error exporting Observed Default Rates: {ex.Message}");
+            }
+        }
+
+
+
+
 
     }
 }

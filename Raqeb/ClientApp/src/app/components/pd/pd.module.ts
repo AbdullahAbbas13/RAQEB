@@ -8,6 +8,7 @@ import { PdListComponent } from './pd-list/pd-list.component';
 import { TransitionMatrixComponent } from './transition-matrix/transition-matrix.component';
 import { YearlyAvgTransitionMatrixComponent } from './yearly-avg-transition-matrix/yearly-avg-transition-matrix.component';
 import { LongRunMatrixComponent } from './long-run-matrix/long-run-matrix.component';
+import { ODRComponent } from './odr/odr.component';
 
 
 @NgModule({
@@ -16,7 +17,8 @@ import { LongRunMatrixComponent } from './long-run-matrix/long-run-matrix.compon
     PdListComponent,
     TransitionMatrixComponent,
     YearlyAvgTransitionMatrixComponent,
-    LongRunMatrixComponent
+    LongRunMatrixComponent,
+    ODRComponent
   ],
   imports: [
     CommonModule,

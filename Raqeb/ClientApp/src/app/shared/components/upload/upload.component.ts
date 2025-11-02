@@ -27,7 +27,13 @@ export class UploadComponent {
 
   async uploadFile() {
     if (!this.selectedFile) {
-      alert('Please select a file first');
+      Swal.fire({
+        icon: 'warning',
+        title: 'تنبيه',
+        text: 'الرجاء اختيار ملف أولاً',
+        confirmButtonText: 'حسناً',
+        confirmButtonColor: '#ffc107'
+      });
       return;
     }
 
@@ -38,32 +44,74 @@ export class UploadComponent {
         fileName: this.selectedFile.name
       };
 
-      this.swaggerClient.apiLGDUploadPost(fileParam).subscribe(
-        (response) => {
-          console.log('Upload successful', response);
-           Swal.fire({
-                  icon: 'success',
-                  title: 'تم بنجاح',
-                  text: '  بنجاح LGD تم رفع الملف وحساب ',
-                  confirmButtonText: 'حسناً',
-                  confirmButtonColor: '#28a745'
-                });
-          this.selectedFile = null;
-          // Reset the file input
-          const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-          if (fileInput) fileInput.value = '';
-        },
-        (error) => {
-          console.error('Upload failed', error);
-          alert('Upload failed: ' + error.message);
-        }
-      ).add(() => {
-        this.uploading = false;
-      });
+      // Handle different upload types
+      if (this.Type === 'PD') {
+        this.swaggerClient.apiPDImportPost(fileParam).subscribe(
+          (response) => {
+            if (response.success) {
+              Swal.fire({
+                icon: 'success',
+                title: 'تم بنجاح',
+                text: 'تم رفع ملف PD بنجاح',
+                confirmButtonText: 'حسناً',
+                confirmButtonColor: '#28a745'
+              });
+            } else {
+              Swal.fire({
+                icon: 'error',
+                title: 'خطأ',
+                text: response.message || 'حدث خطأ أثناء رفع الملف',
+                confirmButtonText: 'حسناً',
+                confirmButtonColor: '#dc3545'
+              });
+            }
+            this.resetFileInput();
+          },
+          (error) => {
+            this.handleUploadError(error);
+          }
+        ).add(() => {
+          this.uploading = false;
+        });
+      } else if (this.Type === 'LGD') {
+        this.swaggerClient.apiLGDUploadPost(fileParam).subscribe(
+          (response) => {
+            Swal.fire({
+              icon: 'success',
+              title: 'تم بنجاح',
+              text: 'تم رفع ملف LGD بنجاح',
+              confirmButtonText: 'حسناً',
+              confirmButtonColor: '#28a745'
+            });
+            this.resetFileInput();
+          },
+          (error) => {
+            this.handleUploadError(error);
+          }
+        ).add(() => {
+          this.uploading = false;
+        });
+      }
     } catch (error) {
-      console.error('Error during upload', error);
-      alert('An error occurred during upload');
-      this.uploading = false;
+      this.handleUploadError(error);
     }
+  }
+
+  private resetFileInput() {
+    this.selectedFile = null;
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    if (fileInput) fileInput.value = '';
+  }
+
+  private handleUploadError(error: any) {
+    console.error('Upload failed', error);
+    Swal.fire({
+      icon: 'error',
+      title: 'خطأ',
+      text: 'حدث خطأ أثناء رفع الملف',
+      confirmButtonText: 'حسناً',
+      confirmButtonColor: '#dc3545'
+    });
+    this.uploading = false;
   }
 }

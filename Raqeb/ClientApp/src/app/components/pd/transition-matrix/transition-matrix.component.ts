@@ -28,7 +28,7 @@ export class TransitionMatrixComponent implements OnInit {
       pageSize: [12],
       page: [1],
       version: [1],
-      poolId : [7]
+      poolId : [1]
     });
 
     // Initialize months array

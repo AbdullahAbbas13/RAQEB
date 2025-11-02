@@ -1,5 +1,4 @@
 ﻿using EFCore.BulkExtensions;
-using Microsoft.EntityFrameworkCore;
 using OfficeOpenXml;
 using Raqeb.Shared.DTOs;
 using Raqeb.Shared.Models;
@@ -58,6 +57,9 @@ namespace Raqeb.BL.Repositories
         Task<TransitionMatrixDto> CalculateLongRunAverageTransitionMatrixAsync();
 
         Task<byte[]> ExportLongRunToExcelAsync();
+        Task<ApiResponse<List<PDObservedRateDto>>> GetObservedDefaultRatesAsync();
+
+        Task<byte[]> ExportObservedDefaultRatesToExcelAsync();
 
     }
 
@@ -78,6 +80,27 @@ namespace Raqeb.BL.Repositories
         {
             if (file == null || file.Length == 0)
                 return ApiResponse<string>.FailResponse("❌ File is empty or missing.");
+
+            // 🧹 حذف البيانات القديمة قبل الاستيراد
+            var deleteSqlCommands = new[]
+            {
+                "DELETE FROM [dbo].[PDAverageCells]",
+                "DELETE FROM [dbo].[PDLongRunCells]",
+                "DELETE FROM [dbo].[PDMatrixCells]",
+                "DELETE FROM [dbo].[PDObservedRates]",
+                "DELETE FROM [dbo].[PDTransitionCells]",
+                "DELETE FROM [dbo].[CustomerGrades]",
+                "DELETE FROM [dbo].[PDMonthlyRowStats]",
+                "DELETE FROM [dbo].[PDMonthlyTransitionCells]",
+                "DELETE FROM [dbo].[PDYearlyAverageCells]",
+                "DELETE FROM [dbo].[PDObservedRates]",
+            };
+
+            foreach (var sql in deleteSqlCommands)
+            {
+                await _uow.DbContext.Database.ExecuteSqlRawAsync(sql);
+            }
+
 
             var bulkConfig = new BulkConfig
             {
@@ -135,13 +158,14 @@ namespace Raqeb.BL.Repositories
                         // 🧠 حساب المصفوفات النهائية
                         var transition = CalculateTransitionMatrixFromMemory(pool, customers);
                         await CalculateAllYearlyAverageTransitionMatricesAsync();
+                        await CalculateAndSaveObservedDefaultRatesAsync();
 
-                         //var average = CalculateAverageTransitionMatrixFromMemory(transition.Data);
-                         //var longRun = CalculateLongRunMatrixFromMemory(transition.Data);
-                         //var odr = CalculateObservedDefaultRateFromMemory(transition.Data);
+                        //var average = CalculateAverageTransitionMatrixFromMemory(transition.Data);
+                        //var longRun = CalculateLongRunMatrixFromMemory(transition.Data);
+                        //var odr = CalculateObservedDefaultRateFromMemory(transition.Data);
 
-                         // 💾 حفظ النتائج النهائية في قاعدة البيانات
-                         await SaveCalculatedMatricesAsync(
+                        // 💾 حفظ النتائج النهائية في قاعدة البيانات
+                        await SaveCalculatedMatricesAsync(
                             pool,
                             newVersion,
                             transition,
@@ -1070,6 +1094,9 @@ namespace Raqeb.BL.Repositories
                         yearlyCellsBuffer.Clear();
                     }
 
+
+
+
                     Console.WriteLine($"✅ Processed chunk {i / chunkSize + 1} / {Math.Ceiling(allIds.Count / (double)chunkSize)}");
                 }
             }
@@ -1433,6 +1460,183 @@ namespace Raqeb.BL.Repositories
 
             // 🧱 حدود الجدول
             using (var range = ws.Cells[startRow, 1, row, 7])
+            {
+                range.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                range.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                range.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+                range.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+            }
+
+            return await package.GetAsByteArrayAsync();
+        }
+
+        public async Task<ApiResponse<string>> CalculateAndSaveObservedDefaultRatesAsync()
+        {
+            try
+            {
+                _uow.DbContext.Database.SetCommandTimeout(0);
+
+                // 🧱 1️⃣ تحميل البيانات السنوية
+                var yearlyData = await _uow.DbContext.PDYearlyAverageCells
+                    .AsNoTracking()
+                    .ToListAsync();
+
+                if (!yearlyData.Any())
+                    return ApiResponse<string>.FailResponse("⚠️ لا توجد بيانات في PDYearlyAverageCells.");
+
+                // 🗓️ 2️⃣ استخراج السنوات المميزة
+                var years = yearlyData.Select(x => x.Year).Distinct().OrderBy(y => y).ToList();
+
+                var odrList = new List<PDObservedRate>();
+
+                foreach (var year in years)
+                {
+                    // 🧩 بيانات السنة الحالية
+                    var yearCells = yearlyData.Where(x => x.Year == year).ToList();
+                    if (!yearCells.Any())
+                        continue;
+
+                    // 🧮 3️⃣ مجموع العملاء اللي انتقلوا إلى Default
+                    double defaultSum = yearCells
+                        .Where(x => x.ColumnIndex == 3 && x.RowIndex < 3) // 0→Grade1, 1→Grade2, 2→Grade3
+                        .Sum(x => x.Value);
+
+                    // 🧮 4️⃣ مجموع إجمالي العملاء في الدرجات 1–3
+                    double totalSum = yearCells
+                        .Where(x => x.RowIndex < 3)
+                        .GroupBy(x => x.RowIndex)
+                        .Sum(g => g.Sum(c => c.Value));
+
+                    // ⚙️ 5️⃣ حساب النسبة المئوية
+                    double odrPercent = totalSum == 0 ? 0 : Math.Round((defaultSum / totalSum) * 100, 4);
+
+                    // 💾 6️⃣ حفظ النتيجة كنسبة مئوية
+                    odrList.Add(new PDObservedRate
+                    {
+                        PoolId = yearCells.First().PoolId,
+                        Year = year,
+                        ObservedDefaultRate = odrPercent,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+
+                // 🧹 حذف القيم القديمة قبل الحفظ
+                await _uow.DbContext.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[PDObservedRates]");
+
+                // 🚀 إدخال النتائج الجديدة
+                if (odrList.Any())
+                    await _uow.DbContext.BulkInsertAsync(odrList);
+
+                return ApiResponse<string>.SuccessResponse("✅ Observed Default Rates (as %) calculated and saved successfully.");
+            }
+            catch (Exception ex)
+            {
+                return ApiResponse<string>.FailResponse($"❌ Error while calculating ODR: {ex.Message}");
+            }
+        }
+
+        public async Task<ApiResponse<List<PDObservedRateDto>>> GetObservedDefaultRatesAsync()
+        {
+            try
+            {
+                _uow.DbContext.Database.SetCommandTimeout(0);
+
+                // 🧱 جلب كل السجلات من الجدول
+                var data = await _uow.DbContext.PDObservedRates
+                    .AsNoTracking()
+                    .Where(x => x.Year != 2021) // 👈 استبعاد سنة 2021
+                    .OrderBy(x => x.Year)
+                    .ToListAsync();
+
+                if (data == null || !data.Any())
+                    return ApiResponse<List<PDObservedRateDto>>.FailResponse("⚠️ لا توجد بيانات ODR محفوظة حتى الآن.");
+
+                // 🔄 تحويلها إلى DTO منسق
+                var result = data.Select(x => new PDObservedRateDto
+                {
+                    Year = x.Year,
+                    ObservedDefaultRate = x.ObservedDefaultRate,
+                }).ToList();
+
+                return ApiResponse<List<PDObservedRateDto>>.SuccessResponse("✅ تم جلب Observed Default Rates بنجاح.", result);
+            }
+            catch (Exception ex)
+            {
+                return ApiResponse<List<PDObservedRateDto>>.FailResponse($"❌ حدث خطأ أثناء جلب البيانات: {ex.Message}");
+            }
+        }
+
+        public async Task<byte[]> ExportObservedDefaultRatesToExcelAsync()
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+
+            // 🧱 جلب البيانات من الجدول (بدون سنة 2021)
+            var data = await _uow.DbContext.PDObservedRates
+                .AsNoTracking()
+                .Where(x => x.Year != 2021)
+                .OrderBy(x => x.Year)
+                .ToListAsync();
+
+            if (data == null || !data.Any())
+                return Array.Empty<byte>();
+
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("Observed Default Rates");
+
+            int startRow = 1;
+
+            // 🏷️ عنوان رئيسي
+            ws.Cells[startRow, 1].Value = "Observed Default Rates by Year";
+            ws.Cells[startRow, 1, startRow, 4].Merge = true;
+            ws.Cells[startRow, 1].Style.Font.Bold = true;
+            ws.Cells[startRow, 1].Style.Font.Size = 14;
+            ws.Cells[startRow, 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+            ws.Cells[startRow, 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(0, 32, 96)); // Dark Blue
+            ws.Cells[startRow, 1].Style.Font.Color.SetColor(System.Drawing.Color.White);
+            ws.Cells[startRow, 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+            startRow += 2;
+
+            // 🧱 رؤوس الأعمدة
+            string[] headers = { "Year", "Pool ID", "Observed Default Rate (%)", "Created At" };
+            for (int i = 0; i < headers.Length; i++)
+            {
+                ws.Cells[startRow, i + 1].Value = headers[i];
+                ws.Cells[startRow, i + 1].Style.Font.Bold = true;
+                ws.Cells[startRow, i + 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+                ws.Cells[startRow, i + 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                ws.Cells[startRow, i + 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(0, 32, 96));
+                ws.Cells[startRow, i + 1].Style.Font.Color.SetColor(System.Drawing.Color.White);
+            }
+
+            int row = startRow;
+            foreach (var item in data)
+            {
+                row++;
+                ws.Cells[row, 1].Value = item.Year;
+                ws.Cells[row, 2].Value = item.PoolId;
+                ws.Cells[row, 3].Value = (double)item.ObservedDefaultRate;
+                ws.Cells[row, 3].Style.Numberformat.Format = "0.0000"; // عرض 4 أرقام عشرية
+                ws.Cells[row, 4].Value = item.CreatedAt.ToString("yyyy-MM-dd HH:mm");
+            }
+
+            // 🧮 صف الإجماليات
+            row++;
+            ws.Cells[row, 1].Value = "Average";
+            ws.Cells[row, 1].Style.Font.Bold = true;
+            ws.Cells[row, 3].Formula = $"AVERAGE(C{startRow + 1}:C{row - 1})";
+            ws.Cells[row, 3].Style.Numberformat.Format = "0.0000";
+            ws.Cells[row, 3].Style.Font.Bold = true;
+            ws.Cells[row, 3].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+            ws.Cells[row, 3].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.LightYellow);
+
+            // 🎨 تنسيقات عامة
+            ws.Cells.AutoFitColumns();
+            ws.View.ShowGridLines = false;
+            ws.Cells.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+            ws.Cells.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
+
+            // 🧱 حدود الجدول
+            using (var range = ws.Cells[startRow, 1, row, 4])
             {
                 range.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
                 range.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;

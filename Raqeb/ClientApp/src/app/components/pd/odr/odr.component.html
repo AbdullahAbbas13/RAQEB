@@ -1,0 +1,54 @@
+<div class="odr-container">
+  <div class="header-section">
+    <div class="title-section">
+      <h2>Observed Default Rates</h2>
+      <p class="period-label">Historical Default Rates Analysis</p>
+    </div>
+  </div>
+
+  <!-- Loading State -->
+  <div class="loading-section" *ngIf="loading">
+    <p>Loading observed default rates...</p>
+  </div>
+
+  <!-- Error State -->
+  <div class="error-section" *ngIf="error">
+    <p class="error-message">{{ error }}</p>
+  </div>
+
+  <!-- Success Message -->
+  <!-- <div class="success-section" *ngIf="successMessage && !error">
+    <p class="success-message">{{ successMessage }}</p>
+  </div> -->
+
+  <!-- Data Display -->
+  <div class="matrix-content" *ngIf="!loading && observedRates.length > 0">
+    <div class="table-responsive">
+      <table class="observed-rates-table">
+        <thead>
+          <tr>
+            <th class="metric-header">Metric</th>
+            <th *ngFor="let rate of observedRates" class="year-header">
+              {{ rate.year }}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="metric-label">Default Rate (%)</td>
+            <td *ngFor="let rate of observedRates" 
+                class="rate-cell"
+                [class.high-risk]="isHighRisk(rate.observedDefaultRate)">
+              {{ rate.observedDefaultRate }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- No Data State -->
+  <div class="no-data-section" *ngIf="!loading && observedRates.length === 0 && !error">
+    <p>No observed default rates data available.</p>
+  </div>
+</div>
