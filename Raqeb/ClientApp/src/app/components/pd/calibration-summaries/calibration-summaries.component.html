@@ -15,6 +15,39 @@
 
   <div class="content-section" *ngIf="!loading">
     <div class="grid">
+      <!-- Key Metrics Card -->
+      <div class="col-12">
+        <div class="card key-metrics-card">
+          <div class="card-header">
+            <div class="header-left">
+              <i class="pi pi-chart-bar"></i>
+              <h3>Key Portfolio Metrics</h3>
+            </div>
+          </div>
+          <div class="metrics-grid" *ngIf="selectedSummary">
+            <div class="metric-item portfolio-pd">
+              <div class="metric-icon">
+                <i class="pi pi-percentage"></i>
+              </div>
+              <div class="metric-content">
+                <label>Portfolio PD</label>
+                <span class="metric-value">{{formatPercent(selectedSummary.portfolioPD)}}</span>
+              </div>
+            </div>
+            
+            <div class="metric-item total-count">
+              <div class="metric-icon">
+                <i class="pi pi-users"></i>
+              </div>
+              <div class="metric-content">
+                <label>Total Count</label>
+                <span class="metric-value">{{formatLargeNumber(selectedSummary.totalCount)}}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Parameters Card -->
       <div class="col-12">
         <div class="card parameters-card">
@@ -221,4 +254,4 @@
     </div>
     <span class="loading-text">Loading Calibration Data...</span>
   </div>
-</div>
+</div> 

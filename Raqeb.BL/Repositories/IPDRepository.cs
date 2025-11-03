@@ -1730,44 +1730,63 @@ namespace Raqeb.BL.Repositories
 
                 foreach (var (poolId, year) in poolYears)
                 {
+                    // 🧮 اجلب بيانات الـ Grades (ODR + Count)
                     var perGrade = await GetPerGradeDataAsync(poolId, year);
                     if (perGrade == null || !perGrade.Any())
                         continue;
 
+                    // 🎯 احصل على الـ Portfolio ODR
                     var targetPD = await GetPortfolioPDAsync(poolId, year);
                     if (targetPD == null)
                         continue;
 
+                    // 🧾 حساب الانحدار الخطي (Slope / Intercept)
                     var (intercept, slope) = CalculateRegressionParameters(perGrade);
                     if (double.IsNaN(slope))
                         continue;
 
+                    // ⚙️ حساب C-Intercept بالـ Bisection
                     double cIntercept = FindCalibratedIntercept(perGrade, slope, targetPD.Value);
 
-                    allRows.AddRange(BuildCalibrationRows(perGrade, poolId, year, intercept, slope, cIntercept));
+                    // 🧩 بناء صفوف النتائج
+                    var rows = BuildCalibrationRows(perGrade, poolId, year, intercept, slope, cIntercept);
+
+                    // 🔹 حساب الإجمالي والـ Portfolio PD بدقة زي الإكسل
+                    int totalCount = perGrade.Sum(p => p.Count);
+
+                    // ⚙️ مطابقة طريقة Excel بالحرف (بدون /100)
+                    double portfolioPD = totalCount > 0
+                        ? rows.Sum(r => (double)r.CFittedPDPercent * r.Count) / totalCount
+                        : 0;
+
+                    // 🧾 تخزين النسبة النهائية كما تظهر في Excel (بدون *100 إضافية)
+                    foreach (var r in rows)
+                    {
+                        r.TotalCount = totalCount;
+                        r.PortfolioPD = (decimal)Math.Round(portfolioPD, 2); // 1.00% زي الإكسل
+                    }
+
+
+                    allRows.AddRange(rows);
                 }
 
                 if (!allRows.Any())
                     return;
 
-                // ✅ إزالة التكرار لو حصل
-                // ✅ إزالة التكرار على مستوى PoolId فقط
-                // بعد ما تخلص كل loop أو قبل الحفظ
-                    allRows = allRows
-                        .GroupBy(x => new { x.PoolId, x.Grade }) // ⬅️ مش Year
-                        .Select(g => g.OrderByDescending(x => x.Year).First()) // آخر سنة فقط
-                        .ToList();
+                // ✅ إزالة التكرار على مستوى PoolId + Grade (آخر سنة فقط)
+                allRows = allRows
+                    .GroupBy(x => new { x.PoolId, x.Grade })
+                    .Select(g => g.OrderByDescending(x => x.Year).First())
+                    .ToList();
 
-
-
-
-
+                // 💾 حفظ النتائج
                 await _uow.DbContext.BulkInsertAsync(allRows);
                 await _uow.DbContext.SaveChangesAsync();
+
+                Console.WriteLine("✅ Calibration calculated and saved successfully.");
             }
             catch (Exception ex)
             {
-                // ممكن تسجيل الخطأ في Log فقط، بدون ريتيرن
                 Console.WriteLine($"❌ Calibration error: {ex.Message}");
             }
         }
@@ -2102,7 +2121,8 @@ namespace Raqeb.BL.Repositories
                 .GroupBy(x => new { x.PoolId, x.Year })
                 .Select(g =>
                 {
-                    var first = g.First();
+                    // 🔹 أول صف في المجموعة بيحتوي على PortfolioPD و TotalCount المحفوظين
+                    var first = g.OrderByDescending(x => x.CreatedAt).FirstOrDefault();
 
                     var grades = g.Select(d => new CalibrationGradeDto
                     {
@@ -2116,19 +2136,14 @@ namespace Raqeb.BL.Repositories
                         Count = d.Count
                     }).ToList();
 
-                    var totalCount = g.Sum(d => d.Count);
-                    var portfolioPD = totalCount > 0
-                        ? g.Sum(d => (double)d.CFittedPDPercent * d.Count) / totalCount
-                        : 0;
-
                     return new CalibrationSummaryDto
                     {
-                        Intercept = (double)first.Intercept,
-                        Slope = (double)first.Slope,
-                        CIntercept = (double)first.CIntercept,
-                        Grades = grades,
-                        PortfolioPD = portfolioPD,
-                        TotalCount = totalCount
+                        Intercept = first.Intercept,
+                        Slope = first.Slope,
+                        CIntercept = first.CIntercept,
+                        PortfolioPD = (double)(first.PortfolioPD ?? 0),
+                        TotalCount = first.TotalCount ?? 0,
+                        Grades = grades
                     };
                 })
                 .ToList();

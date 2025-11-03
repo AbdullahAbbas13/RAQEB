@@ -18,6 +18,11 @@
         public double Slope { get; set; }
         public double CIntercept { get; set; }
         public DateTime CreatedAt { get; set; }
+
+        public decimal? PortfolioPD { get; set; }     // إجمالي Portfolio PD (1%)
+        public int? TotalCount { get; set; }           // إجمالي العملاء (14531)
+
+
     }
 
 
