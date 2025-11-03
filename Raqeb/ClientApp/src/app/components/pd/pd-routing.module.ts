@@ -6,6 +6,7 @@ import { TransitionMatrixComponent } from './transition-matrix/transition-matrix
 import { YearlyAvgTransitionMatrixComponent } from './yearly-avg-transition-matrix/yearly-avg-transition-matrix.component';
 import { LongRunMatrixComponent } from './long-run-matrix/long-run-matrix.component';
 import { ODRComponent } from './odr/odr.component';
+import { CalibrationSummariesComponent } from './calibration-summaries/calibration-summaries.component';
 
 const routes: Routes = [
     {
@@ -27,6 +28,10 @@ const routes: Routes = [
         {
           path: "long-run-matrix",
           component: LongRunMatrixComponent,
+        },
+        {
+          path: "calibration-summaries",
+          component: CalibrationSummariesComponent,
         },
         
         {

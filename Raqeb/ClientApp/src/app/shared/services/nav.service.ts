@@ -110,6 +110,7 @@ export class NavService implements OnDestroy {
         { path: "/PD/yearly-avg-transition-matrix", title: "Yearly Avg Transition Matrix", type: "link" },
         { path: "/PD/long-run-matrix", title: "Long Run Matrix", type: "link" },
         { path: "/PD/odr", title: "Observed DR", type: "link" },
+        { path: "/PD/calibration-summaries", title: "Calibration Summaries", type: "link" },
       ],
     },
     // {

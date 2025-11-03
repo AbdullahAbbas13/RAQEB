@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Raqeb.DAL.databaseContext;
 
@@ -11,9 +12,11 @@ using Raqeb.DAL.databaseContext;
 namespace Raqeb.DAL.Migrations
 {
     [DbContext(typeof(DatabaseContext))]
-    partial class DatabaseContextModelSnapshot : ModelSnapshot
+    [Migration("20251103062135_dsdsdswewwdsssdfsfd")]
+    partial class dsdsdswewwdsssdfsfd
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -568,41 +571,6 @@ namespace Raqeb.DAL.Migrations
                     b.ToTable("PDLongRunAverages");
                 });
 
-            modelBuilder.Entity("Raqeb.Shared.Models.PDLongRunCell", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("FromGrade")
-                        .HasColumnType("int");
-
-                    b.Property<int>("PoolId")
-                        .HasColumnType("int");
-
-                    b.Property<string>("PoolName")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<int>("ToGrade")
-                        .HasColumnType("int");
-
-                    b.Property<double>("Value")
-                        .HasColumnType("float");
-
-                    b.Property<int>("Version")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("PDLongRunCells");
-                });
-
             modelBuilder.Entity("Raqeb.Shared.Models.PDMatrixCell", b =>
                 {
                     b.Property<int>("Id")
@@ -922,6 +890,41 @@ namespace Raqeb.DAL.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("PDAverageCells");
+                });
+
+            modelBuilder.Entity("Raqeb.Shared.Models.Raqeb.Shared.Models.PDLongRunCell", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("ColumnIndex")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("PoolId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("PoolName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int>("RowIndex")
+                        .HasColumnType("int");
+
+                    b.Property<double>("Value")
+                        .HasColumnType("float");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("PDLongRunCells");
                 });
 
             modelBuilder.Entity("Raqeb.Shared.Models.Raqeb.Shared.Models.PDMonthlyRowStat", b =>

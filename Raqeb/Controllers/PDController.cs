@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Raqeb.BL.Repositories;
 using Raqeb.Shared.DTOs;
+using Raqeb.Shared.Models;
 using Raqeb.Shared.ViewModels.Responses;
 
 namespace Raqeb.API.Controllers
@@ -140,7 +141,7 @@ namespace Raqeb.API.Controllers
         [HttpPost("transition-matrix/longrun")]
         public async Task<ActionResult<TransitionMatrixDto>> GetLongRunMatrix()
         {
-            var matrix = await _repo.CalculateLongRunAverageTransitionMatrixAsync();
+            var matrix = await _repo.GetSavedLongRunMatrixAsync();
             if (matrix == null)
                 return NotFound("⚠️ No data found for this pool.");
 
@@ -166,9 +167,7 @@ namespace Raqeb.API.Controllers
         // 🟢 API Endpoint: عرض كل Observed Default Rates
         // ============================================================
         [HttpGet("observed-default-rates")]
-        [ProducesResponseType(typeof(ApiResponse<List<PDObservedRateDto>>), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiResponse<string>), StatusCodes.Status400BadRequest)]
-        public async Task<IActionResult> GetObservedDefaultRates()
+        public async Task<ActionResult< ApiResponse<List<PDObservedRateDto>>>> GetObservedDefaultRates()
         {
             var result = await _repo.GetObservedDefaultRatesAsync();
 
@@ -202,6 +201,29 @@ namespace Raqeb.API.Controllers
                 return BadRequest($"❌ Error exporting Observed Default Rates: {ex.Message}");
             }
         }
+
+
+        [HttpGet("calibration-results")]
+        [ProducesResponseType(typeof(ApiResponse<List<PDCalibrationResult>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetCalibrationResults()
+        {
+            var data = await _repo.GetCalibrationResultsAsync();
+
+            if (!data.Any())
+                return NotFound(ApiResponse<List<PDCalibrationResult>>.FailResponse("⚠️ لا توجد نتائج Calibration."));
+
+            return Ok(data);
+        }
+
+        [HttpGet("calibration-summaries")]
+        public async Task<ActionResult<List<CalibrationSummaryDto>>> GetAllCalibrationSummaries()
+        {
+            var result = await _repo.GetAllCalibrationSummariesAsync();
+
+            return Ok(result);
+        }
+
+
 
 
 

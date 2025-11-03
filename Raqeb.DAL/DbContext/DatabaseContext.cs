@@ -35,6 +35,8 @@ namespace Raqeb.DAL.databaseContext
         public DbSet<PDMonthlyTransitionCell> PDMonthlyTransitionCells { get; set; }
         public DbSet<PDYearlyAverageCell> PDYearlyAverageCells { get; set; } 
         public DbSet<PDMonthlyRowStat> PDMonthlyRowStats { get; set; } 
+        public DbSet<PDCalibrationResult> PDCalibrationResults  { get; set; } 
+        public DbSet<PDLongRunAverage> PDLongRunAverages { get; set; } 
 
          
 

@@ -54,13 +54,13 @@ namespace Raqeb.BL.Repositories
         Task<List<TransitionMatrixDto>> GetYearlyAverageTransitionMatricesAsync(PDMatrixFilterDto filter);
 
         Task<byte[]> ExportYearlyAverageToExcelAsync(PDMatrixFilterDto filter);
-        Task<TransitionMatrixDto> CalculateLongRunAverageTransitionMatrixAsync();
-
+        Task<TransitionMatrixDto> GetSavedLongRunMatrixAsync();
         Task<byte[]> ExportLongRunToExcelAsync();
         Task<ApiResponse<List<PDObservedRateDto>>> GetObservedDefaultRatesAsync();
 
         Task<byte[]> ExportObservedDefaultRatesToExcelAsync();
-
+        Task<List<PDCalibrationResult>> GetCalibrationResultsAsync();
+        Task<List<CalibrationSummaryDto>> GetAllCalibrationSummariesAsync();
     }
 
     // ============================================================
@@ -94,6 +94,8 @@ namespace Raqeb.BL.Repositories
                 "DELETE FROM [dbo].[PDMonthlyTransitionCells]",
                 "DELETE FROM [dbo].[PDYearlyAverageCells]",
                 "DELETE FROM [dbo].[PDObservedRates]",
+                "DELETE FROM [dbo].[PDCalibrationResults]",
+                "DELETE FROM [dbo].[PDLongRunAverages]"
             };
 
             foreach (var sql in deleteSqlCommands)
@@ -159,6 +161,8 @@ namespace Raqeb.BL.Repositories
                         var transition = CalculateTransitionMatrixFromMemory(pool, customers);
                         await CalculateAllYearlyAverageTransitionMatricesAsync();
                         await CalculateAndSaveObservedDefaultRatesAsync();
+                        await CalculateAndSaveLongRunAverageAsync();
+                        await CalculateAndSaveCalibrationAsync();
 
                         //var average = CalculateAverageTransitionMatrixFromMemory(transition.Data);
                         //var longRun = CalculateLongRunMatrixFromMemory(transition.Data);
@@ -1306,85 +1310,148 @@ namespace Raqeb.BL.Repositories
             return await package.GetAsByteArrayAsync();
         }
 
-        public async Task<TransitionMatrixDto> CalculateLongRunAverageTransitionMatrixAsync()
+
+        public async Task CalculateAndSaveLongRunAverageAsync()
         {
-            // 🧱 1. اجلب كل البيانات السنوية المخزّنة في الجدول
-            var allYearly = await _uow.DbContext.PDYearlyAverageCells.ToListAsync();
-
-            if (!allYearly.Any())
-                return null;
-
-            // 🧮 2. احسب عدد السنوات الفعلية المميزة
-            var distinctYears = allYearly.Select(x => x.Year).Distinct().Count();
-
-            if (distinctYears == 0)
-                distinctYears = 1; // حماية من القسمة على صفر
-
-            // 🧮 3. حساب المتوسط العام لكل خلية (من → إلى) عبر كل السنوات
-            var grouped = allYearly
-                .GroupBy(c => new { c.RowIndex, c.ColumnIndex })
-                .Select(g => new
-                {
-                    From = g.Key.RowIndex + 1,
-                    To = g.Key.ColumnIndex + 1,
-                    // ✅ نحسب مجموع القيم ونقسم على عدد السنوات فقط
-                    AvgValue = Math.Round(g.Sum(x => x.Value) / 6, 4)
-                })
-                .ToList();
-
-            // ✅ 4. بناء مصفوفة 4×4 كاملة حتى لو بعض القيم مفقودة
-            var avgCells = new List<TransitionCellDto>();
-            for (int from = 1; from <= 4; from++)
+            try
             {
-                for (int to = 1; to <= 4; to++)
-                {
-                    double value = grouped.FirstOrDefault(g => g.From == from && g.To == to)?.AvgValue ?? 0;
-                    avgCells.Add(new TransitionCellDto
+                _uow.DbContext.Database.SetCommandTimeout(0);
+
+                // 🧱 1. اجلب كل البيانات السنوية
+                var allYearly = await _uow.DbContext.PDYearlyAverageCells
+                    .AsNoTracking()
+                    .Where(x => x.Year <= 2020) 
+                    .ToListAsync();
+
+                if (!allYearly.Any())
+                    throw new Exception("⚠️ لا توجد بيانات في PDYearlyAverageCells.");
+
+                // 🧮 2. حساب عدد السنوات الفعلية
+                var distinctYears = allYearly.Select(x => x.Year).Distinct().Count();
+                if (distinctYears == 0)
+                    distinctYears = 1;
+
+                // 🧮 3. نحسب المتوسط العام لكل خلية (من → إلى)
+                var grouped = allYearly
+                    .GroupBy(c => new { c.PoolId, c.RowIndex, c.ColumnIndex })
+                    .Select(g => new
                     {
-                        FromGrade = from,
-                        ToGrade = to,
-                        Count = value
-                    });
-                }
+                        g.Key.PoolId,
+                        FromGrade = g.Key.RowIndex + 1,
+                        ToGrade = g.Key.ColumnIndex + 1,
+                        AvgValue = Math.Round(g.Sum(x => x.Value) / distinctYears, 4)
+                    })
+                    .ToList();
+
+                // 💾 نحضّر البيانات للحفظ في PDLongRunCells
+                var longRunCells = grouped.Select(g => new PDLongRunCell
+                {
+                    PoolId = g.PoolId,
+                    FromGrade = g.FromGrade,
+                    ToGrade = g.ToGrade,
+                    Value = g.AvgValue,
+                    CreatedAt = DateTime.UtcNow
+                }).ToList();
+
+                // 🧮 4. نحسب Totals و PD% و AvgClients
+                var avgRows = grouped
+                    .GroupBy(g => new { g.PoolId, g.FromGrade })
+                    .Select(g =>
+                    {
+                        var total = g.Sum(x => x.AvgValue);
+                        var toDefault = g.FirstOrDefault(x => x.ToGrade == 4)?.AvgValue ?? 0;
+                        var pdPercent = total > 0 ? Math.Round((toDefault / total) * 100, 6) : 0;
+                        var avgClients = (int)Math.Round(total);
+
+                        return new PDLongRunAverage
+                        {
+                            FromGrade = g.Key.FromGrade,
+                            ToGrade = 4,
+                            Count = (decimal)Math.Round(total, 4),
+                            YearCount = distinctYears,
+                            AvgClients = avgClients,
+                            PDPercent = (decimal)pdPercent,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                    })
+                    .ToList();
+
+                // 💾 حفظ البيانات الجديدة Bulk
+                var bulkConfig = new BulkConfig
+                {
+                    UseTempDB = true,
+                    PreserveInsertOrder = true,
+                    BulkCopyTimeout = 0,
+                    BatchSize = 20000
+                };
+
+                await _uow.DbContext.BulkInsertAsync(longRunCells, bulkConfig);
+                await _uow.DbContext.BulkInsertAsync(avgRows, bulkConfig);
+                await _uow.DbContext.SaveChangesAsync();
             }
-
-            // 📊 5. نحسب Totals و PD%
-            var rowStats = avgCells
-                .GroupBy(x => x.FromGrade)
-                .Select(g =>
-                {
-                    var total = g.Sum(x => x.Count);
-                    var pd = g.FirstOrDefault(x => x.ToGrade == 4)?.Count ?? 0;
-                    var pdPercent = total > 0 ? Math.Round((pd / total) * 100, 2) : 0;
-
-                    return new RowStatDto
-                    {
-                        FromGrade = g.Key,
-                        TotalCount = (int)Math.Round(total),
-                        PDPercent = pdPercent
-                    };
-                })
-                .ToList();
-
-            // 🎯 6. نرجع النتيجة النهائية
-            return new TransitionMatrixDto
+            catch (Exception ex)
             {
-                Title = $"Long Run Average Transition Matrix (Based on {distinctYears} Years)",
-                Year = 0,
-                IsYearlyAverage = false,
-                Cells = avgCells,
-                RowStats = rowStats
-            };
+
+            }
+          
         }
 
+
+        public async Task<TransitionMatrixDto> GetSavedLongRunMatrixAsync()
+        {
+            var cells = await _uow.DbContext.PDLongRunCells
+                .AsNoTracking()
+                .OrderBy(c => c.FromGrade)
+                .ThenBy(c => c.ToGrade)
+                .ToListAsync();
+
+            var avgRows = await _uow.DbContext.PDLongRunAverages
+                .AsNoTracking()
+                .OrderBy(a => a.FromGrade)
+                .ToListAsync();
+
+            if (!cells.Any() || !avgRows.Any())
+                throw new Exception("⚠️ لا توجد بيانات Long Run محفوظة في قاعدة البيانات.");
+
+            var dto = new TransitionMatrixDto
+            {
+                Title = "Long Run Average Transition Matrix (From Saved Data)",
+                Year = 0,
+                IsYearlyAverage = false,
+                Cells = cells.Select(c => new TransitionCellDto
+                {
+                    FromGrade = c.FromGrade,
+                    ToGrade = c.ToGrade,
+                    Count = c.Value
+                }).ToList(),
+                RowStats = avgRows.Select(a => new RowStatDto
+                {
+                    FromGrade = a.FromGrade,
+                    TotalCount = (int)Math.Round((double)a.Count),
+                    PDPercent = (double)a.PDPercent
+                }).ToList()
+            };
+
+            return dto;
+        }
 
         public async Task<byte[]> ExportLongRunToExcelAsync()
         {
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
 
-            // 🧮 احسب مصفوفة Long Run من كل البيانات (بدون فلتر)
-            var matrix = await CalculateLongRunAverageTransitionMatrixAsync();
-            if (matrix == null || matrix.Cells == null || !matrix.Cells.Any())
+            // 🧱 1️⃣ اجلب بيانات Long Run المحفوظة من الـ DB
+            var cells = await _uow.DbContext.PDLongRunCells
+                .AsNoTracking()
+                .OrderBy(c => c.FromGrade)
+                .ThenBy(c => c.ToGrade)
+                .ToListAsync();
+
+            var avgStats = await _uow.DbContext.PDLongRunAverages
+                .AsNoTracking()
+                .OrderBy(a => a.FromGrade)
+                .ToListAsync();
+
+            if (!cells.Any() || !avgStats.Any())
                 return Array.Empty<byte>();
 
             using var package = new ExcelPackage();
@@ -1392,16 +1459,16 @@ namespace Raqeb.BL.Repositories
 
             int startRow = 1;
 
-            // 🏷️ عنوان رئيسي
-            ws.Cells[startRow, 1].Value = matrix.Title;
-            ws.Cells[startRow, 1, startRow, 7].Merge = true;
+            // 🏷️ العنوان الرئيسي
+            ws.Cells[startRow, 1].Value = "Long Run Average Transition Matrix (Saved Data)";
+            ws.Cells[startRow, 1, startRow, 8].Merge = true;
             ws.Cells[startRow, 1].Style.Font.Bold = true;
             ws.Cells[startRow, 1].Style.Font.Size = 14;
             ws.Cells[startRow, 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
             startRow += 2;
 
             // 🧱 رؤوس الأعمدة
-            string[] headers = { "From Grade ↓ / To Grade →", "1", "2", "3", "4", "Total", "PD%" };
+            string[] headers = { "From Grade ↓ / To Grade →", "1", "2", "3", "4", "Total", "PD%", "Avg. Clients" };
             for (int i = 0; i < headers.Length; i++)
             {
                 ws.Cells[startRow, i + 1].Value = headers[i];
@@ -1413,7 +1480,7 @@ namespace Raqeb.BL.Repositories
 
             int row = startRow;
 
-            // 🧮 تعبئة المصفوفة 4×4
+            // 🧮 تعبئة صفوف المصفوفة (Grades 1 → 4)
             foreach (var fromGrade in Enumerable.Range(1, 4))
             {
                 row++;
@@ -1422,35 +1489,37 @@ namespace Raqeb.BL.Repositories
 
                 for (int toGrade = 1; toGrade <= 4; toGrade++)
                 {
-                    var cell = matrix.Cells.FirstOrDefault(c => c.FromGrade == fromGrade && c.ToGrade == toGrade);
-                    ws.Cells[row, toGrade + 1].Value = Math.Round(cell?.Count ?? 0, 2);
+                    var cell = cells.FirstOrDefault(c => c.FromGrade == fromGrade && c.ToGrade == toGrade);
+                    ws.Cells[row, toGrade + 1].Value = Math.Round(cell?.Value ?? 0, 4);
                 }
 
-                // 📊 إجمالي و PD%
-                var stat = matrix.RowStats.FirstOrDefault(r => r.FromGrade == fromGrade);
-                ws.Cells[row, 6].Value = stat?.TotalCount ?? 0;
+                // 📊 إجمالي الصف و PD%
+                var stat = avgStats.FirstOrDefault(a => a.FromGrade == fromGrade);
+                ws.Cells[row, 6].Value = stat?.Count ?? 0;
                 ws.Cells[row, 7].Value = stat?.PDPercent ?? 0;
-                ws.Cells[row, 7].Style.Numberformat.Format = "0.0";
+                ws.Cells[row, 7].Style.Numberformat.Format = "0.00";
+                ws.Cells[row, 8].Value = stat?.AvgClients ?? 0;
             }
 
-            // 🟦 صف الإجماليات في النهاية
+            // 🟦 صف الإجماليات
             row++;
             ws.Cells[row, 1].Value = "Total";
             ws.Cells[row, 1].Style.Font.Bold = true;
 
             for (int to = 1; to <= 4; to++)
             {
-                var totalForCol = matrix.Cells.Where(c => c.ToGrade == to).Sum(c => c.Count);
-                ws.Cells[row, to + 1].Value = Math.Round(totalForCol, 2);
+                var totalForCol = cells.Where(c => c.ToGrade == to).Sum(c => c.Value);
+                ws.Cells[row, to + 1].Value = Math.Round(totalForCol, 4);
                 ws.Cells[row, to + 1].Style.Font.Bold = true;
             }
 
-            var grandTotal = matrix.RowStats.Sum(r => r.TotalCount);
-            ws.Cells[row, 6].Value = grandTotal;
+            // الإجماليات النهائية
+            var grandTotal = avgStats.Sum(r => r.Count);
+            ws.Cells[row, 6].Value = Math.Round(grandTotal, 2);
             ws.Cells[row, 6].Style.Font.Bold = true;
             ws.Cells[row, 7].Value = 100;
+            ws.Cells[row, 7].Style.Numberformat.Format = "0.00";
             ws.Cells[row, 7].Style.Font.Bold = true;
-            ws.Cells[row, 7].Style.Numberformat.Format = "0.0";
 
             // 🎨 تنسيقات عامة
             ws.Cells.AutoFitColumns();
@@ -1459,7 +1528,7 @@ namespace Raqeb.BL.Repositories
             ws.Cells.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
 
             // 🧱 حدود الجدول
-            using (var range = ws.Cells[startRow, 1, row, 7])
+            using (var range = ws.Cells[startRow, 1, row, 8])
             {
                 range.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
                 range.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
@@ -1645,6 +1714,426 @@ namespace Raqeb.BL.Repositories
             }
 
             return await package.GetAsByteArrayAsync();
+        }
+
+        public async Task CalculateAndSaveCalibrationAsync()
+        {
+            try
+            {
+                _uow.DbContext.Database.SetCommandTimeout(0);
+
+                var poolYears = await GetAllPoolYearsAsync();
+                if (!poolYears.Any())
+                    return;
+
+                var allRows = new List<PDCalibrationResult>();
+
+                foreach (var (poolId, year) in poolYears)
+                {
+                    var perGrade = await GetPerGradeDataAsync(poolId, year);
+                    if (perGrade == null || !perGrade.Any())
+                        continue;
+
+                    var targetPD = await GetPortfolioPDAsync(poolId, year);
+                    if (targetPD == null)
+                        continue;
+
+                    var (intercept, slope) = CalculateRegressionParameters(perGrade);
+                    if (double.IsNaN(slope))
+                        continue;
+
+                    double cIntercept = FindCalibratedIntercept(perGrade, slope, targetPD.Value);
+
+                    allRows.AddRange(BuildCalibrationRows(perGrade, poolId, year, intercept, slope, cIntercept));
+                }
+
+                if (!allRows.Any())
+                    return;
+
+                // ✅ إزالة التكرار لو حصل
+                // ✅ إزالة التكرار على مستوى PoolId فقط
+                // بعد ما تخلص كل loop أو قبل الحفظ
+                    allRows = allRows
+                        .GroupBy(x => new { x.PoolId, x.Grade }) // ⬅️ مش Year
+                        .Select(g => g.OrderByDescending(x => x.Year).First()) // آخر سنة فقط
+                        .ToList();
+
+
+
+
+
+                await _uow.DbContext.BulkInsertAsync(allRows);
+                await _uow.DbContext.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                // ممكن تسجيل الخطأ في Log فقط، بدون ريتيرن
+                Console.WriteLine($"❌ Calibration error: {ex.Message}");
+            }
+        }
+
+        public async Task<List<PDCalibrationResult>> GetCalibrationResultsAsync()
+        {
+            return await _uow.DbContext.PDCalibrationResults
+                .AsNoTracking()
+                .OrderBy(x => x.PoolId)
+                .ThenBy(x => x.Year)
+                .ThenBy(x => x.Grade)
+                .ToListAsync();
+        }
+
+
+
+
+
+        //public async Task<ApiResponse<string>> CalculateAndSaveCalibrationAsync()
+        //{
+        //    try
+        //    {
+        //        _uow.DbContext.Database.SetCommandTimeout(0);
+
+        //        var poolYears = await GetAllPoolYearsAsync();
+        //        if (!poolYears.Any())
+        //            return ApiResponse<string>.FailResponse("⚠️ لا توجد بيانات ODR محفوظة في قاعدة البيانات.");
+
+        //        var allRows = new List<PDCalibrationResult>();
+
+        //        foreach (var (poolId, year) in poolYears)
+        //        {
+        //            // 🧮 اجلب بيانات الـ Grades (ODR + Count)
+        //            var perGrade = await GetPerGradeDataAsync(poolId, year);
+        //            if (perGrade == null || !perGrade.Any())
+        //                continue;
+
+        //            // 🎯 احصل على الـ Portfolio ODR
+        //            var targetPD = await GetPortfolioPDAsync(poolId, year);
+        //            if (targetPD == null)
+        //                continue;
+
+        //            // 🧾 حساب الانحدار الخطي (Slope / Intercept)
+        //            var (intercept, slope) = CalculateRegressionParameters(perGrade);
+        //            if (double.IsNaN(slope))
+        //                continue;
+
+        //            // ⚙️ حساب C-Intercept بالـ Bisection
+        //            double cIntercept = FindCalibratedIntercept(perGrade, slope, targetPD.Value);
+
+        //            // 🧩 بناء صفوف النتائج
+        //            allRows.AddRange(BuildCalibrationRows(perGrade, poolId, year, intercept, slope, cIntercept));
+        //        }
+
+        //        if (!allRows.Any())
+        //            return ApiResponse<string>.FailResponse("⚠️ لم يتم العثور على بيانات لحساب Calibration.");
+
+        //        await SaveCalibrationResultsAsync(allRows);
+
+        //        return ApiResponse<string>.SuccessResponse(
+        //            $"✅ تم حساب وحفظ Calibration بنجاح لكل الـ Pools ({allRows.Select(r => r.PoolId).Distinct().Count()}).");
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return ApiResponse<string>.FailResponse($"❌ خطأ أثناء الحساب الجماعي: {ex.Message}");
+        //    }
+        //}
+
+
+        private async Task<List<(int PoolId, int Year)>> GetAllPoolYearsAsync()
+        {
+            var data = await _uow.DbContext.PDObservedRates
+                .AsNoTracking()
+                .Where(x => x.Year <= 2020) // ✅ لو عايز تستبعد 2021
+                .Select(x => new { x.PoolId, x.Year })
+                .ToListAsync();
+
+            // ✅ تصفية نهائية في الذاكرة لضمان التفرد 100%
+            var unique = data
+                .GroupBy(x => new { x.PoolId, x.Year })
+                .Select(g => (g.Key.PoolId, g.Key.Year))
+                .OrderBy(x => x.PoolId)
+                .ThenBy(x => x.Year)
+                .ToList();
+
+            return unique;
+        }
+
+        // 🔹 ضيفها فوق أو تحت باقي الدوال داخل نفس الكلاس
+        private const double EPS = 1e-4; // يقلد Excel clamp
+
+        private static double ClampProb(double p)
+        {
+            return Math.Clamp(p, EPS, 1.0 - EPS);
+        }
+
+
+        private async Task<List<(int Grade, double Odr, int Count)>> GetPerGradeDataAsync(int poolId, int year)
+        {
+            // ✅ نقرأ من PDLongRunAverages فقط
+            // ملاحظة: لو عندك PoolId في الجدول استخدم السطر المعلّق بدل الحالي.
+            var longRunRows = await _uow.DbContext.PDLongRunAverages
+                .AsNoTracking()
+                //.Where(r => r.PoolId == poolId)
+                .ToListAsync();
+
+            if (!longRunRows.Any())
+                return new List<(int Grade, double Odr, int Count)>();
+
+            // 🧮 نطلع لكل Grade (1..3):
+            // - ODR = PDPercent/100 (مخزّن مسبقاً)
+            // - Count = AvgClients (مخزّن مسبقاً)
+            // ملاحظة: الجدول فيه صفوف (From→To)، و PDPercent/AvgClients مكررين لكل To، فهنا بناخد قيمة ممثلة (Max أو First)
+            var perGrade = longRunRows
+                .GroupBy(r => r.FromGrade)
+                .Select(g => new
+                {
+                    Grade = g.Key,
+                    // ناخد PDPercent الممثلة للـ grade (ممكن Max/First طالما ثابتة على الصفوف)
+                    PdPercent = g.Max(x => (double)x.PDPercent),
+                    AvgClients = g.Max(x => x.AvgClients)
+                })
+                .Where(x => x.Grade >= 1 && x.Grade <= 3) // بنستخدم Grades 1..3 فقط
+                .OrderBy(x => x.Grade)
+                .ToList();
+
+            var result = new List<(int Grade, double Odr, int Count)>();
+            const double eps = 1e-4;
+
+            foreach (var g in perGrade)
+            {
+                var pdRaw = g.PdPercent / 100.0;
+                var pd = ClampProb(pdRaw);        // ✅ موحّد
+                var count = g.AvgClients > 0 ? g.AvgClients : 0;
+                result.Add((g.Grade, pd, count));
+            }
+
+            return result;
+        }
+
+        private async Task<double?> GetPortfolioPDAsync(int poolId, int year)
+        {
+            var yr = await _uow.DbContext.PDObservedRates
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.PoolId == poolId && x.Year == year);
+
+            if (yr == null) return null;
+
+            double pd = (double)yr.ObservedDefaultRate / 100.0;
+            return Math.Clamp(pd, 1e-6, 1 - 1e-6);
+        }
+
+        private (double Intercept, double Slope) CalculateRegressionParameters(List<(int Grade, double Odr, int Count)> perGrade)
+        {
+            // ❗ لازم نغذي perGrade بـ ODRs الخاصة بالدرجات (Long-Run أو سنة معينة)
+            // بدون استخدام Count كوزن — OLS فقط.
+
+            const double eps = 1e-4; // يقابل تقريب Excel لـ 100% → 99.99%
+
+            // 1) فضّل توحيد أي تكرار في نفس الـ Grade
+            var pts = perGrade
+                .GroupBy(p => p.Grade)
+                .Select(g =>
+                {
+                    var p = g.First();
+                    // clamp ODR بعيدًا عن 0 و 1 (زي Excel)
+                    double pd = ClampProb(p.Odr);
+                    return new
+                    {
+                        X = (double)g.Key,                // 1, 2, 3
+                        Y = Math.Log(pd / (1.0 - pd)),   // ln(odds)
+                    };
+                })
+                .OrderBy(t => t.X)
+                .ToList();
+
+            if (pts.Count < 2) return (double.NaN, double.NaN);
+
+            // 2) OLS غير مُوزَّن (علشان يطلع نفس قيم الصورة)
+            double n = pts.Count;
+            double sumX = pts.Sum(p => p.X);
+            double sumY = pts.Sum(p => p.Y);
+            double sumXX = pts.Sum(p => p.X * p.X);
+            double sumXY = pts.Sum(p => p.X * p.Y);
+
+            double denom = (n * sumXX - sumX * sumX);
+            if (Math.Abs(denom) < 1e-12) return (double.NaN, double.NaN);
+
+            double slope = (n * sumXY - sumX * sumY) / denom;
+            double intercept = (sumY - slope * sumX) / n;
+
+            return (intercept, slope);
+        }
+
+
+        //private (double Intercept, double Slope) CalculateRegressionParameters(List<(int Grade, double Odr, int Count)> perGrade)
+        //{
+        //    const double eps = 1e-6;
+
+        //    // 1) دمج أي تكرار لنفس الـ Grade وتهيئة بيانات آمنة
+        //    var pts = perGrade
+        //        .GroupBy(p => p.Grade)
+        //        .Select(g =>
+        //        {
+        //            // خُد تمثيل واحد للـ grade (هنا بناخد أول ODR ونجمع الـ Counts)
+        //            var first = g.First();
+        //            int totalCount = g.Sum(z => Math.Max(0, z.Count));
+
+        //            // clamp للـ ODR
+        //            double safeOdr = Math.Min(Math.Max(first.Odr, eps), 1.0 - eps);
+
+        //            return new
+        //            {
+        //                X = (double)g.Key,                      // Grade
+        //                Y = Math.Log(safeOdr / (1.0 - safeOdr)),// ln(odds)
+        //                W = Math.Max(1, totalCount)             // وزن النقطة
+        //            };
+        //        })
+        //        .OrderBy(t => t.X)
+        //        .ToList();
+
+        //    // لازم على الأقل نقطتين وباختلاف في X
+        //    if (pts.Count < 2) return (double.NaN, double.NaN);
+
+        //    // 2) مجاميع الانحدار الموزون
+        //    double sumW = pts.Sum(p => (double)p.W);
+        //    double sumWX = pts.Sum(p => p.W * p.X);
+        //    double sumWY = pts.Sum(p => p.W * p.Y);
+        //    double sumWXX = pts.Sum(p => p.W * p.X * p.X);
+        //    double sumWXY = pts.Sum(p => p.W * p.X * p.Y);
+
+        //    double denom = (sumW * sumWXX - sumWX * sumWX);
+        //    if (Math.Abs(denom) < 1e-12) return (double.NaN, double.NaN);
+
+        //    double slope = (sumW * sumWXY - sumWX * sumWY) / denom;
+        //    double intercept = (sumWY - slope * sumWX) / sumW;
+
+        //    return (intercept, slope);
+        //}
+
+
+        private double FindCalibratedIntercept(List<(int Grade, double Odr, int Count)> perGrade, double slope, double targetPD)
+        {
+            Func<double, double> avgPD = (cint) =>
+            {
+                double num = 0, den = 0;
+                foreach (var p in perGrade)
+                {
+                    double z = cint + slope * p.Grade;
+                    double s = 1.0 / (1.0 + Math.Exp(-z));
+                    num += s * p.Count;
+                    den += p.Count;
+                }
+                return den == 0 ? 0 : num / den;
+            };
+
+            double left = -20, right = 20;
+            for (int it = 0; it < 100; it++)
+            {
+                double mid = (left + right) / 2.0;
+                double val = avgPD(mid);
+                if (val > targetPD) right = mid;
+                else left = mid;
+            }
+            return (left + right) / 2.0;
+        }
+
+
+        private List<PDCalibrationResult> BuildCalibrationRows(
+      List<(int Grade, double Odr, int Count)> perGrade,
+      int poolId, int year,
+      double intercept, double slope, double cIntercept)
+        {
+            var rows = new List<PDCalibrationResult>();
+
+            // ✅ تأكد أن لكل Grade صف واحد فقط
+            var uniqueGrades = perGrade
+                .GroupBy(p => p.Grade)
+                .Select(g => g.First())
+                .OrderBy(g => g.Grade)
+                .ToList();
+
+            foreach (var p in uniqueGrades)
+            {
+                double pd = ClampProb(p.Odr);
+                double lnOdds = Math.Log(pd / (1 - pd));
+
+                double fittedLn = intercept + slope * p.Grade;
+                double fittedPD = 1.0 / (1.0 + Math.Exp(-fittedLn));
+
+                double cFittedLn = cIntercept + slope * p.Grade;
+                double cFittedPD = 1.0 / (1.0 + Math.Exp(-cFittedLn));
+
+                rows.Add(new PDCalibrationResult
+                {
+                    PoolId = poolId,
+                    Year = year,
+                    Grade = p.Grade,
+                    Count = p.Count,
+                    ODRPercent = (decimal)Math.Round(pd * 100, 4),
+                    LnOdds = Math.Round(lnOdds, 6),
+                    FittedLnOdds = Math.Round(fittedLn, 6),
+                    FittedPDPercent = (decimal)Math.Round(fittedPD * 100, 6),
+                    CFittedLnOdds = Math.Round(cFittedLn, 6),
+                    CFittedPDPercent = (decimal)Math.Round(cFittedPD * 100, 6),
+                    Intercept = Math.Round(intercept, 6),
+                    Slope = Math.Round(slope, 6),
+                    CIntercept = Math.Round(cIntercept, 6),
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            return rows;
+        }
+
+
+        public async Task<List<CalibrationSummaryDto>> GetAllCalibrationSummariesAsync()
+        {
+            // 🧱 اجلب كل البيانات الموجودة في الجدول
+            var allData = await _uow.DbContext.PDCalibrationResults
+                .AsNoTracking()
+                .OrderBy(x => x.PoolId)
+                .ThenBy(x => x.Year)
+                .ThenBy(x => x.Grade)
+                .ToListAsync();
+
+            if (!allData.Any())
+                return new List<CalibrationSummaryDto>();
+
+            // 🧩 جمّع النتائج لكل (PoolId, Year)
+            var summaries = allData
+                .GroupBy(x => new { x.PoolId, x.Year })
+                .Select(g =>
+                {
+                    var first = g.First();
+
+                    var grades = g.Select(d => new CalibrationGradeDto
+                    {
+                        Grade = d.Grade,
+                        ODR = (double)d.ODRPercent,
+                        LnOdds = d.LnOdds,
+                        FittedLnOdds = d.FittedLnOdds,
+                        FittedPD = (double)d.FittedPDPercent,
+                        CFittedLnOdds = d.CFittedLnOdds,
+                        CFittedPD = (double)d.CFittedPDPercent,
+                        Count = d.Count
+                    }).ToList();
+
+                    var totalCount = g.Sum(d => d.Count);
+                    var portfolioPD = totalCount > 0
+                        ? g.Sum(d => (double)d.CFittedPDPercent * d.Count) / totalCount
+                        : 0;
+
+                    return new CalibrationSummaryDto
+                    {
+                        Intercept = (double)first.Intercept,
+                        Slope = (double)first.Slope,
+                        CIntercept = (double)first.CIntercept,
+                        Grades = grades,
+                        PortfolioPD = portfolioPD,
+                        TotalCount = totalCount
+                    };
+                })
+                .ToList();
+
+            return summaries;
         }
 
     }

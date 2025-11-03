@@ -8,4 +8,5 @@
         public decimal RecoveryRate { get; set; }     // نسبة التحصيل بعد الخصم
         public decimal UnsecuredLGD { get; set; }     // نسبة الخسارة الفعلية
     }
+
 }
